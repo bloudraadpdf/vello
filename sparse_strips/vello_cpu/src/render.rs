@@ -970,7 +970,8 @@ mod tests {
     use glifo::Glyph;
     use vello_common::color::PremulRgba8;
     use vello_common::color::palette::css::{BLUE, RED};
-    use vello_common::kurbo::{Rect, Shape};
+    use vello_common::kurbo::{Affine, Rect, Shape};
+    use vello_common::peniko::Fill;
     use vello_common::pixmap::{Pixmap, PixmapMut};
     use vello_common::tile::Tile;
 
@@ -1007,6 +1008,40 @@ mod tests {
         ctx.fill_rect(&rect);
         ctx.flush();
         ctx
+    }
+
+    /// The pixels of an even-odd ring under a quarter turn, with `cosine` as the cosine of the turn.
+    fn quarter_turned_ring(cosine: f64) -> Pixmap {
+        let mut ctx = RenderContext::new(800, 600);
+        ctx.set_paint(RED);
+        ctx.set_fill_rule(Fill::EvenOdd);
+        ctx.set_transform(
+            Affine::scale(4.0 / 3.0) * Affine::new([cosine, 1.0, -1.0, cosine, 255.0, 75.0]),
+        );
+        let mut ring = Rect::new(75.0, 75.0, 180.0, 180.0).to_path(0.1);
+        ring.extend(Rect::new(90.0, 90.0, 165.0, 165.0).to_path(0.1));
+        ctx.fill_path(&ring);
+        ctx.flush();
+        let mut pixmap = Pixmap::new(800, 600);
+        ctx.render(&mut pixmap, &mut Resources::new());
+        pixmap
+    }
+
+    #[test]
+    fn a_quarter_turn_with_the_f32_cosine_paints_as_the_exact_turn() {
+        let exact = quarter_turned_ring(0.0);
+        let inexact = quarter_turned_ring(f64::from(core::f32::consts::FRAC_PI_2.cos()));
+
+        let differing = (0..600)
+            .flat_map(|y| (0..800).map(move |x| (x, y)))
+            .filter(|&(x, y)| exact.sample(x, y) != inexact.sample(x, y))
+            .collect::<alloc::vec::Vec<_>>();
+        assert!(
+            differing.is_empty(),
+            "{} pixels differ, first {:?}",
+            differing.len(),
+            differing.first()
+        );
     }
 
     #[test]

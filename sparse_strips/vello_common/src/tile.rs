@@ -718,9 +718,17 @@ impl Tiles {
                     }
                 } else {
                     // General case, any line which crosses more than one tile and is not vertical.
-                    let dx = p1_x - p0_x;
-                    let dy = p1_y - p0_y;
+                    //
+                    // The x-extents of the line in each tile row are computed in `f64`. In `f32` tile
+                    // units, a line that leaves a tile boundary by less than half an ulp rounds onto
+                    // the boundary and gets the tile right of it, while strip rendering, which uses the
+                    // exact segment between the endpoints, finds it left of that tile and loses its
+                    // winding for that tile's pixels.
+                    let dx = f64::from(p1_x) - f64::from(p0_x);
+                    let dy = f64::from(p1_y) - f64::from(p0_y);
                     let x_slope = dx / dy;
+                    let x_at =
+                        |y: f32| f64::from(p0_x) + (f64::from(y) - f64::from(p0_y)) * x_slope;
                     let dx_dir = (line_bottom_x >= line_top_x) as u32;
                     let not_dx_dir = dx_dir ^ 1;
 
@@ -731,8 +739,8 @@ impl Tiles {
                         #[inline(always)]
                         |tile_buf: &mut Vec<Tile>,
                          y_idx: u16,
-                         row_left_x: f32,
-                         row_right_x: f32,
+                         row_left_x: f64,
+                         row_right_x: f64,
                          w_start: u32,
                          w_end: u32,
                          w_single: u32| {
@@ -763,12 +771,14 @@ impl Tiles {
                          w_start: u32,
                          w_end: u32,
                          w_single: u32| {
-                            let row_top_x = p0_x + (row_top_y - p0_y) * x_slope;
-                            let row_bottom_x = p0_x + (row_bottom_y - p0_y) * x_slope;
+                            let row_top_x = x_at(row_top_y);
+                            let row_bottom_x = x_at(row_bottom_y);
 
                             // TODO: Evaluate whether we need the second max/min.
-                            let row_left_x = f32::min(row_top_x, row_bottom_x).max(line_left_x);
-                            let row_right_x = f32::max(row_top_x, row_bottom_x).min(line_right_x);
+                            let row_left_x =
+                                f64::min(row_top_x, row_bottom_x).max(f64::from(line_left_x));
+                            let row_right_x =
+                                f64::max(row_top_x, row_bottom_x).min(f64::from(line_right_x));
 
                             if row_left_x < 0.0 {
                                 self.windings.culled = true;
@@ -804,7 +814,8 @@ impl Tiles {
                                     // fractional portion of the winding, as the coarse winding will
                                     // naturally get included by the clamped tile logic!
                                     let y_slope = dy / dx;
-                                    let y_intersect = row_top_y - (row_top_x * y_slope);
+                                    let y_intersect =
+                                        (f64::from(row_top_y) - row_top_x * y_slope) as f32;
 
                                     let (off_screen_top_y, off_screen_bottom_y) = if row_top_x < 0.0
                                     {
@@ -849,16 +860,16 @@ impl Tiles {
                             let y = f32::from(y_top_tiles);
                             let row_bottom_y = (y + 1.0).min(line_bottom_y);
                             let row_bottom_x = if row_bottom_y == line_bottom_y {
-                                line_bottom_x
+                                f64::from(line_bottom_x)
                             } else {
-                                p0_x + (row_bottom_y - p0_y) * x_slope
+                                x_at(row_bottom_y)
                             };
                             let mask = ((y >= line_top_y) as u32) << WINDING_SHIFT;
                             push_row_extents(
                                 &mut self.tile_buf,
                                 y_top_tiles,
-                                f32::min(line_top_x, row_bottom_x),
-                                f32::max(line_top_x, row_bottom_x),
+                                f64::min(f64::from(line_top_x), row_bottom_x),
+                                f64::max(f64::from(line_top_x), row_bottom_x),
                                 w_start_base & mask,
                                 w_end_base & mask,
                                 W & mask,
@@ -872,22 +883,22 @@ impl Tiles {
                         };
 
                         if y_start < y_bottom_tiles {
-                            let mut row_top_x = p0_x + (f32::from(y_start) - p0_y) * x_slope;
+                            let mut row_top_x = x_at(f32::from(y_start));
                             for y_idx in y_start..y_bottom_tiles {
                                 let y = f32::from(y_idx);
                                 // Note: We purposefully don't precompute it once
                                 // and just increment by `x_slope` after every iteration
                                 // to avoid errors due to floating point inaccuracies.
                                 let row_bottom_x = if line_bottom_y < y + 1.0 {
-                                    line_bottom_x
+                                    f64::from(line_bottom_x)
                                 } else {
-                                    p0_x + (y + 1.0 - p0_y) * x_slope
+                                    x_at(y + 1.0)
                                 };
                                 push_row_extents(
                                     &mut self.tile_buf,
                                     y_idx,
-                                    f32::min(row_top_x, row_bottom_x),
-                                    f32::max(row_top_x, row_bottom_x),
+                                    f64::min(row_top_x, row_bottom_x),
+                                    f64::max(row_top_x, row_bottom_x),
                                     w_start_base,
                                     w_end_base,
                                     W,
@@ -2241,7 +2252,10 @@ mod tests {
 
     // This test reproduces an issue where a floating point inaccuracy would
     // cause a tile with the winding bit being emitted at a slightly earlier
-    // position, causing a filled 4x4 block artifact to appear.
+    // position than the end of the row above, causing a filled 4x4 block
+    // artifact to appear. Both rows take the same x at their boundary: the
+    // exact segment between the endpoints crosses y = 2 at x = 32.9999995, so
+    // row 1 ends in tile 32 and row 2 starts there with the winding bit.
     #[test]
     fn issue_early_winding_emission() {
         const WIDTH: u16 = Tile::WIDTH * 35;
@@ -2263,16 +2277,17 @@ mod tests {
         let mut tiles = Tiles::new(Level::baseline(), HEIGHT, HEIGHT);
         tiles.make_tiles_analytic_aa(Level::baseline(), &lines, WIDTH, HEIGHT);
 
-        let row_tiles: Vec<Tile> = tiles
-            .tile_buf
-            .iter()
-            .copied()
-            .filter(|tile| tile.y == 2)
-            .collect();
+        let row = |y: u16| -> Vec<Tile> {
+            tiles
+                .tile_buf
+                .iter()
+                .copied()
+                .filter(|tile| tile.y == y)
+                .collect()
+        };
 
-        // When the issue occurred, another tile at location x = 32, y = 2
-        // would be emitted.
-        assert_eq!(row_tiles, [Tile::new(33, 2, 0, W)]);
+        assert_eq!(row(1), [Tile::new(32, 1, 0, W)]);
+        assert_eq!(row(2), [Tile::new(32, 2, 0, W), Tile::new(33, 2, 0, 0)]);
     }
 
     #[test]
