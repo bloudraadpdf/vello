@@ -1975,14 +1975,21 @@ impl<'a> OutlineCacheSession<'a> {
                 // Pop a drawing buffer from the free list (or create a new one).
                 let mut drawing_buf = self.free_list.pop().unwrap_or_default();
 
-                let draw_settings = if let Some(hinting_instance) = hinting_instance {
-                    DrawSettings::hinted(hinting_instance, false)
-                } else {
-                    DrawSettings::unhinted(Size::new(size), var_key.coords())
-                };
-
                 drawing_buf.reuse();
-                outline_glyph.draw(draw_settings, &mut drawing_buf).unwrap();
+                if let Some(hinting_instance) = hinting_instance {
+                    let draw_settings = DrawSettings::hinted(hinting_instance, false);
+                    outline_glyph.draw(draw_settings, &mut drawing_buf).unwrap();
+                } else {
+                    // skrifa scales an outline in 26.6 fixed point; the outline in font units, scaled in f64,
+                    // keeps the precision of the font.
+                    let draw_settings = DrawSettings::unhinted(Size::unscaled(), var_key.coords());
+                    outline_glyph.draw(draw_settings, &mut drawing_buf).unwrap();
+                    if size != font_info.upem {
+                        drawing_buf.path.apply_affine(Affine::scale(
+                            f64::from(size) / f64::from(font_info.upem),
+                        ));
+                    }
+                }
                 if embolden.amount != Diagonal2::new(0.0, 0.0) {
                     drawing_buf.path = kurbo::expand_path(
                         &drawing_buf.path,
@@ -2390,6 +2397,53 @@ mod tests {
         assert_eq!(resources.glyph_atlas.len(), 0);
         assert_eq!(resources.glyph_atlas.cache_hits(), 0);
         assert_eq!(resources.glyph_atlas.cache_misses(), 0);
+    }
+
+    /// Roboto has 2,048 units to the em, so at 28 pixels to the em each point of an unhinted outline is a whole or
+    /// half font unit (an implied on-curve point) times 28 / 2048 = 7 / 512: each coordinate times 1024 is a multiple
+    /// of 7.
+    #[test]
+    fn an_unhinted_outline_at_a_size_keeps_the_points_of_the_font() {
+        let font = test_font(TestGlyphKind::Outline);
+        let font_ref = font.as_skrifa();
+        let glyph = font_ref.charmap().map('S').unwrap();
+        let outline = font_ref.outline_glyphs().get(glyph).unwrap();
+        let font_info = FontInfo {
+            id: 0,
+            index: 0,
+            upem: 2048.0,
+        };
+        let mut cache = OutlineCache::default();
+        let mut session = OutlineCacheSession::new(&mut cache, VarLookupKey::new(&[]));
+        let cached = session.get_or_insert(
+            glyph.to_u32(),
+            font_info,
+            28.0,
+            FontEmbolden::default(),
+            VarLookupKey::new(&[]),
+            &outline,
+            None,
+        );
+        let mut coordinates = Vec::new();
+        for element in cached.path.elements() {
+            match *element {
+                kurbo::PathEl::MoveTo(point) | kurbo::PathEl::LineTo(point) => {
+                    coordinates.extend([point.x, point.y]);
+                }
+                kurbo::PathEl::QuadTo(control, point) => {
+                    coordinates.extend([control.x, control.y, point.x, point.y]);
+                }
+                kurbo::PathEl::CurveTo(first, second, point) => {
+                    coordinates.extend([first.x, first.y, second.x, second.y, point.x, point.y]);
+                }
+                kurbo::PathEl::ClosePath => {}
+            }
+        }
+
+        assert!(!coordinates.is_empty());
+        for coordinate in coordinates {
+            assert_eq!((coordinate * 1024.0) % 7.0, 0.0, "{coordinate}");
+        }
     }
 
     #[test]
