@@ -213,16 +213,18 @@ pub(crate) fn flatten<S: Simd>(
                     callback.callback(LinePathEl::LineTo(p3));
                 } else {
                     // The `f32` arithmetic of the flattening runs relative to `p0`, so that the
-                    // subdivision of a curve does not depend on its position.
+                    // subdivision of a curve does not depend on its position. The lines end at
+                    // `p3` itself, so that a closed subpath stays closed.
                     let origin = p0.to_vec2();
                     let c = CubicBez::new(Point::ZERO, p1 - origin, p2 - origin, p3 - origin);
                     let max = flatten_cubic_simd(simd, c, flatten_ctx);
 
-                    for p in &flatten_ctx.flattened_cubics[1..max] {
+                    for p in &flatten_ctx.flattened_cubics[1..max - 1] {
                         callback.callback(LinePathEl::LineTo(
                             Point::new(p.x as f64, p.y as f64) + origin,
                         ));
                     }
+                    callback.callback(LinePathEl::LineTo(p3));
                 }
                 last_pt = p3;
             }
@@ -692,6 +694,23 @@ mod tests {
         };
 
         assert_eq!(line_count((5.0, 5.0)), line_count((345.0, 405.0)));
+    }
+
+    /// The lines of a closed path of cubics end where they start.
+    #[test]
+    fn a_closed_path_of_cubics_flattens_to_a_closed_polyline() {
+        let path = BezPath::from_svg(
+            "M51 6C75.85281 6 96 26.147184 96 51C96 75.85281 75.85281 96 51 96\
+             C26.147184 96 6 75.85281 6 51C6 26.147184 26.147184 6 51 6Z",
+        )
+        .expect("the path parses");
+        let affine = Affine::scale(f64::from(4.0_f32 / 3.0));
+        let (mut lines, mut ctx) = (Vec::new(), FlattenCtx::default());
+        let bbox = RectU16::new(0, 0, 200, 200);
+        fill(Level::new(), &path, affine, &mut lines, &mut ctx, bbox);
+        let (first, last) = (&lines[0], &lines[lines.len() - 1]);
+
+        assert_eq!((last.p1.x, last.p1.y), (first.p0.x, first.p0.y));
     }
 
     fn old_estimate(err_div: f64) -> usize {
