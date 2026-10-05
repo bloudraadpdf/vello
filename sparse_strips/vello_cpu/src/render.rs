@@ -1035,7 +1035,7 @@ mod tests {
         let differing = (0..600)
             .flat_map(|y| (0..800).map(move |x| (x, y)))
             .filter(|&(x, y)| exact.sample(x, y) != inexact.sample(x, y))
-            .collect::<alloc::vec::Vec<_>>();
+            .collect::<vec::Vec<_>>();
         assert!(
             differing.is_empty(),
             "{} pixels differ, first {:?}",
