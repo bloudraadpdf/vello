@@ -212,11 +212,16 @@ pub(crate) fn flatten<S: Simd>(
                 {
                     callback.callback(LinePathEl::LineTo(p3));
                 } else {
-                    let c = CubicBez::new(p0, p1, p2, p3);
+                    // The `f32` arithmetic of the flattening runs relative to `p0`, so that the
+                    // subdivision of a curve does not depend on its position.
+                    let origin = p0.to_vec2();
+                    let c = CubicBez::new(Point::ZERO, p1 - origin, p2 - origin, p3 - origin);
                     let max = flatten_cubic_simd(simd, c, flatten_ctx);
 
                     for p in &flatten_ctx.flattened_cubics[1..max] {
-                        callback.callback(LinePathEl::LineTo(Point::new(p.x as f64, p.y as f64)));
+                        callback.callback(LinePathEl::LineTo(
+                            Point::new(p.x as f64, p.y as f64) + origin,
+                        ));
                     }
                 }
                 last_pt = p3;
@@ -665,7 +670,29 @@ fn estimate(err_div: f64) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::flatten_simd::{MAX_QUADS, estimate};
+    use crate::fearless_simd::Level;
+    use crate::flatten::fill;
+    use crate::flatten_simd::{FlattenCtx, MAX_QUADS, estimate};
+    use crate::geometry::RectU16;
+    use crate::kurbo::{Affine, BezPath};
+    use alloc::vec::Vec;
+
+    /// A cubic at the boundary between 1 and 2 lines flattens to as many lines at any position.
+    #[test]
+    fn a_cubic_flattens_alike_at_any_position() {
+        let line_count = |origin: (f64, f64)| {
+            let mut path = BezPath::new();
+            path.move_to((0.0, 0.0));
+            path.curve_to((0.43, -0.62), (0.92, -1.37), (1.72, -1.47));
+            let affine = Affine::translate(origin) * Affine::scale(0.999_004);
+            let (mut lines, mut ctx) = (Vec::new(), FlattenCtx::default());
+            let bbox = RectU16::new(0, 0, 1000, 1000);
+            fill(Level::new(), &path, affine, &mut lines, &mut ctx, bbox);
+            lines.len()
+        };
+
+        assert_eq!(line_count((5.0, 5.0)), line_count((345.0, 405.0)));
+    }
 
     fn old_estimate(err_div: f64) -> usize {
         let n_quads = (err_div.powf(1. / 6.0).ceil() as usize).max(1);
