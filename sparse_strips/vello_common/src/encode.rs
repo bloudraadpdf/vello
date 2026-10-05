@@ -1053,13 +1053,20 @@ impl<T: GradientLutExt> GradientLut<T> {
         let mut lut = vec![[T::ZERO; 4]; lut_size];
         let lut_flat = bytemuck::cast_slice_mut::<[T; 4], T>(&mut lut);
 
-        // Calculate how many indices are covered by each range.
+        let scale = lut_size as f32 - 1.0;
+
+        // Entry `idx` samples the offset `idx / scale`, so a range covers the entries whose offsets
+        // lie in `[x0, x1)`, and the last range also covers the final entry at offset 1.
         let ramps = {
             let mut ramps = Vec::with_capacity(ranges.len());
             let mut prev_idx = 0;
 
-            for range in ranges {
-                let max_idx = (range.x1 * lut_size as f32) as usize;
+            for (i, range) in ranges.iter().enumerate() {
+                let max_idx = if i + 1 == ranges.len() {
+                    lut_size
+                } else {
+                    (range.x1 * scale).ceil() as usize
+                };
 
                 ramps.push((prev_idx..max_idx, range));
                 prev_idx = max_idx;
@@ -1067,8 +1074,6 @@ impl<T: GradientLutExt> GradientLut<T> {
 
             ramps
         };
-
-        let scale = lut_size as f32 - 1.0;
 
         let inv_lut_scale = f32x4::splat(simd, 1.0 / scale);
         let add_factor = f32x4::from_slice(simd, &[0.0, 1.0, 2.0, 3.0]) * inv_lut_scale;
@@ -1185,14 +1190,45 @@ mod private {
 
 #[cfg(test)]
 mod tests {
-    use super::{EncodeExt, Gradient};
-    use crate::color::DynamicColor;
-    use crate::color::palette::css::{BLACK, BLUE, GREEN};
+    use super::{EncodeExt, Gradient, GradientLut, encode_stops};
+    use crate::color::palette::css::{BLACK, BLUE, GREEN, INDIAN_RED, WHITE};
+    use crate::color::{ColorSpaceTag, DynamicColor, HueDirection};
     use crate::kurbo::{Affine, Point};
     use crate::peniko::{ColorStop, ColorStops};
     use alloc::vec;
-    use peniko::{LinearGradientPosition, RadialGradientPosition};
+    use fearless_simd::Fallback;
+    use peniko::{InterpolationAlphaSpace, LinearGradientPosition, RadialGradientPosition};
     use smallvec::smallvec;
+
+    #[test]
+    fn lut_samples_each_entry_in_the_range_of_its_offset() {
+        let (x0, x1) = (0.022_928_337, 0.024_456_894);
+        let stops = [
+            (0.0, INDIAN_RED),
+            (x0, INDIAN_RED),
+            (x1, WHITE),
+            (1.0, WHITE),
+        ]
+        .map(|(offset, color)| ColorStop {
+            offset,
+            color: DynamicColor::from_alpha_color(color),
+        });
+        let ranges = encode_stops(
+            &stops,
+            ColorSpaceTag::Srgb,
+            HueDirection::Shorter,
+            InterpolationAlphaSpace::Premultiplied,
+        );
+        let lut = GradientLut::<f32>::new(Fallback::new(), &ranges);
+
+        for (idx, entry) in lut.lut().iter().enumerate() {
+            let t = idx as f32 / lut.scale_factor();
+            let expected = INDIAN_RED.lerp_rect(WHITE, ((t - x0) / (x1 - x0)).clamp(0.0, 1.0));
+            for (actual, expected) in entry.iter().zip(expected.components) {
+                assert!((actual - expected).abs() < 1.0e-3, "entry {idx}: {entry:?}");
+            }
+        }
+    }
 
     #[test]
     fn gradient_missing_stops() {
