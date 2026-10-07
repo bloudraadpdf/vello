@@ -169,62 +169,74 @@ pub(crate) fn flatten<S: Simd>(
                 last_pt = p2;
             }
             PathEl::CurveTo(p1, p2, p3) => {
-                let p0 = last_pt;
-                let line = Line::new(p0, p3);
-                // If the cubic Bézier is fully to the right, top, or bottom of the culling bbox,
-                // it does not impact pixel coverage or winding. We can ignore it. The following
-                // checks that conservatively by checking whether the bounding box of the Bézier's
-                // control points is fully outside the culling bbox.
-                if [p0, p1, p2, p3].into_iter().all(|p| p.x > right)
-                    || [p0, p1, p2, p3].into_iter().all(|p| p.y < top)
-                    || [p0, p1, p2, p3].into_iter().all(|p| p.y > bottom)
-                {
-                    callback.callback(LinePathEl::MoveTo(p3));
-                }
-                // The following checks two things. First, if the cubic Bézier is fully to the left
-                // of the culling bbox, it may affect pixel coverage and winding, but its exact
-                // shape does not matter. It can be emitted as a line segment [p0, p3].
-                //
-                // Second, an upper bound on the shortest distance of any point on the cubic Bézier
-                // curve to the line segment [p0, p3] is 3/4 of the maximum of the
-                // control-point-to-line-segment distances.
-                //
-                // With Bernstein weights Bi(t), we have
-                // c(t) = B0(t) p0 + B1(t) p1 + B2(t) p2 + B3(t) p3
-                // with t from 0 to 1 (inclusive).
-                //
-                // Through convexivity of the Euclidean distance function and the line segment,
-                // we have
-                // dist(c(t), [p0, p3]) <= B1(t) dist(p1, [p0, p3]) + B2(t) dist(p2, [p0, p3])
-                //                      <= (B1(t) + B2(t)) max(dist(p1, [p0, p3]), dist(p2, [p0, p3]))
-                //                       = 3 ((1-t)t^2 + (1-t)^2t) max(dist(p1, [p0, p3]), dist(p2, [p0, p3])).
-                //
-                // The inner polynomial has its maximum of 1/4 at t=1/2, hence
-                // max(dist(c(t), [p0, p3])) <= 3/4 max(dist(p1, [p0, p3]), dist(p2, [p0, p3])).
-                //
-                // The following takes the square to elide the square root of the Euclidean
-                // distance.
-                else if [p0, p1, p2, p3].into_iter().all(|p| p.x < left)
-                    || f64::max(
-                        line.nearest(p1, 0.).distance_sq,
-                        line.nearest(p2, 0.).distance_sq,
-                    ) <= 16. / 9. * TOL_2
-                {
-                    callback.callback(LinePathEl::LineTo(p3));
-                } else {
-                    // The `f32` arithmetic of the flattening runs relative to `p0`, so that the
-                    // subdivision of a curve does not depend on its position. The lines end at
-                    // `p3` itself, so that a closed subpath stays closed.
-                    let origin = p0.to_vec2();
-                    let c = CubicBez::new(Point::ZERO, p1 - origin, p2 - origin, p3 - origin);
-                    let max = flatten_cubic_simd(simd, c, flatten_ctx);
-
-                    for p in &flatten_ctx.flattened_cubics[1..max - 1] {
-                        callback.callback(LinePathEl::LineTo(
-                            Point::new(p.x as f64, p.y as f64) + origin,
-                        ));
+                flatten_ctx.cubics.push(CubicBez::new(last_pt, p1, p2, p3));
+                while let Some(c) = flatten_ctx.cubics.pop() {
+                    let CubicBez { p0, p1, p2, p3 } = c;
+                    let line = Line::new(p0, p3);
+                    // If the cubic Bézier is fully to the right, top, or bottom of the culling
+                    // bbox, it does not impact pixel coverage or winding. We can ignore it. The
+                    // following checks that conservatively by checking whether the bounding box of
+                    // the Bézier's control points is fully outside the culling bbox.
+                    if [p0, p1, p2, p3].into_iter().all(|p| p.x > right)
+                        || [p0, p1, p2, p3].into_iter().all(|p| p.y < top)
+                        || [p0, p1, p2, p3].into_iter().all(|p| p.y > bottom)
+                    {
+                        callback.callback(LinePathEl::MoveTo(p3));
                     }
-                    callback.callback(LinePathEl::LineTo(p3));
+                    // The following checks two things. First, if the cubic Bézier is fully to the
+                    // left of the culling bbox, it may affect pixel coverage and winding, but its
+                    // exact shape does not matter. It can be emitted as a line segment [p0, p3].
+                    //
+                    // Second, an upper bound on the shortest distance of any point on the cubic
+                    // Bézier curve to the line segment [p0, p3] is 3/4 of the maximum of the
+                    // control-point-to-line-segment distances.
+                    //
+                    // With Bernstein weights Bi(t), we have
+                    // c(t) = B0(t) p0 + B1(t) p1 + B2(t) p2 + B3(t) p3
+                    // with t from 0 to 1 (inclusive).
+                    //
+                    // Through convexivity of the Euclidean distance function and the line
+                    // segment, we have
+                    // dist(c(t), [p0, p3]) <= B1(t) dist(p1, [p0, p3]) + B2(t) dist(p2, [p0, p3])
+                    //                      <= (B1(t) + B2(t)) max(dist(p1, [p0, p3]), dist(p2, [p0, p3]))
+                    //                       = 3 ((1-t)t^2 + (1-t)^2t) max(dist(p1, [p0, p3]), dist(p2, [p0, p3])).
+                    //
+                    // The inner polynomial has its maximum of 1/4 at t=1/2, hence
+                    // max(dist(c(t), [p0, p3])) <= 3/4 max(dist(p1, [p0, p3]), dist(p2, [p0, p3])).
+                    //
+                    // The following takes the square to elide the square root of the Euclidean
+                    // distance.
+                    else if [p0, p1, p2, p3].into_iter().all(|p| p.x < left)
+                        || f64::max(
+                            line.nearest(p1, 0.).distance_sq,
+                            line.nearest(p2, 0.).distance_sq,
+                        ) <= 16. / 9. * TOL_2
+                    {
+                        callback.callback(LinePathEl::LineTo(p3));
+                    } else {
+                        // The `f32` arithmetic of the flattening runs relative to `p0`, so that
+                        // the subdivision of a curve does not depend on its position. The lines
+                        // end at `p3` itself, so that a closed subpath stays closed.
+                        let origin = p0.to_vec2();
+                        let relative =
+                            CubicBez::new(Point::ZERO, p1 - origin, p2 - origin, p3 - origin);
+                        let error = quad_error(relative, TOL as f32);
+                        // A cubic that needs more than `MAX_QUADS` quadratics flattens as its
+                        // halves: the error of a half is 1/64 of the error of the cubic.
+                        if error > MAX_QUADS_ERROR {
+                            let (head, tail) = c.subdivide();
+                            flatten_ctx.cubics.extend([tail, head]);
+                            continue;
+                        }
+                        let max = flatten_cubic_simd(simd, relative, estimate(error), flatten_ctx);
+
+                        for p in &flatten_ctx.flattened_cubics[1..max - 1] {
+                            callback.callback(LinePathEl::LineTo(
+                                Point::new(p.x as f64, p.y as f64) + origin,
+                            ));
+                        }
+                        callback.callback(LinePathEl::LineTo(p3));
+                    }
                 }
                 last_pt = p3;
             }
@@ -339,9 +351,8 @@ struct FlattenParams {
     val: f64,
 }
 
-/// This limit was chosen based on the pre-existing GitHub gist.
-/// This limit should not be hit in normal operation, but _might_ be hit for very large
-/// transforms.
+/// The most quadratics that approximate 1 cubic, chosen based on the pre-existing GitHub gist.
+/// A cubic that needs more flattens as its halves.
 const MAX_QUADS: usize = 16;
 
 /// The context needed for flattening curves.
@@ -358,6 +369,8 @@ pub struct FlattenCtx {
     n_quads: usize,
     /// Reusable buffer for flattened cubic points.
     flattened_cubics: Vec<Point32>,
+    /// Reusable stack of the cubics left to flatten.
+    cubics: Vec<CubicBez>,
 }
 
 #[inline(always)]
@@ -591,8 +604,12 @@ fn output_lines_simd<S: Simd>(
 }
 
 #[inline(always)]
-fn flatten_cubic_simd<S: Simd>(simd: S, c: CubicBez, ctx: &mut FlattenCtx) -> usize {
-    let n_quads = estimate_num_quads(c, TOL as f32);
+fn flatten_cubic_simd<S: Simd>(
+    simd: S,
+    c: CubicBez,
+    n_quads: usize,
+    ctx: &mut FlattenCtx,
+) -> usize {
     eval_cubics_simd(simd, &c, n_quads, ctx);
     let tol = (TOL as f32) * (1.0 - TO_QUAD_TOL);
     let sqrt_tol = tol.sqrt();
@@ -630,17 +647,21 @@ fn flatten_cubic_simd<S: Simd>(simd: S, c: CubicBez, ctx: &mut FlattenCtx) -> us
     n + 1
 }
 
+/// The sixth power of the number of quadratics that approximate `c` within `accuracy`, before
+/// rounding up.
 #[inline(always)]
-fn estimate_num_quads(c: CubicBez, accuracy: f32) -> usize {
+fn quad_error(c: CubicBez, accuracy: f32) -> f64 {
     let q_accuracy = (accuracy * TO_QUAD_TOL) as f64;
     let max_hypot2 = 432.0 * q_accuracy * q_accuracy;
     let p1x2 = c.p1.to_vec2() * 3.0 - c.p0.to_vec2();
     let p2x2 = c.p2.to_vec2() * 3.0 - c.p3.to_vec2();
     let err = (p2x2 - p1x2).hypot2();
-    let err_div = err / max_hypot2;
 
-    estimate(err_div)
+    err / max_hypot2
 }
+
+/// The largest [`quad_error`] of a cubic that `MAX_QUADS` quadratics approximate.
+const MAX_QUADS_ERROR: f64 = MAX_QUADS.pow(6) as f64;
 
 const TO_QUAD_TOL: f32 = 0.1;
 
@@ -673,10 +694,12 @@ fn estimate(err_div: f64) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::fearless_simd::Level;
-    use crate::flatten::fill;
+    use crate::flatten::{TOL, fill};
     use crate::flatten_simd::{FlattenCtx, MAX_QUADS, estimate};
     use crate::geometry::RectU16;
-    use crate::kurbo::{Affine, BezPath};
+    use crate::kurbo::{
+        Affine, BezPath, CubicBez, Line, ParamCurve, ParamCurveNearest, Point, Shape,
+    };
     use alloc::vec::Vec;
 
     /// A cubic at the boundary between 1 and 2 lines flattens to as many lines at any position.
@@ -711,6 +734,40 @@ mod tests {
         let (first, last) = (&lines[0], &lines[lines.len() - 1]);
 
         assert_eq!((last.p1.x, last.p1.y), (first.p0.x, first.p0.y));
+    }
+
+    /// A cubic that needs more than `MAX_QUADS` quadratics flattens within the tolerance.
+    #[test]
+    fn a_cubic_beyond_max_quads_flattens_within_the_tolerance() {
+        let r = 100_000.0 * TOL;
+        let curve = CubicBez::new((0.0, r), (0.0, 0.0), (r, 0.0), (r, r));
+        let (mut lines, mut ctx) = (Vec::new(), FlattenCtx::default());
+        let bbox = RectU16::new(0, 0, u16::MAX, u16::MAX);
+        fill(
+            Level::new(),
+            curve.path_elements(0.0),
+            Affine::IDENTITY,
+            &mut lines,
+            &mut ctx,
+            bbox,
+        );
+        let point = |p: crate::flatten::Point| Point::new(f64::from(p.x), f64::from(p.y));
+        let polyline = lines[..lines.len() - 1]
+            .iter()
+            .map(|line| Line::new(point(line.p0), point(line.p1)))
+            .collect::<Vec<_>>();
+        let deviation = (0..=10_000)
+            .map(|i| curve.eval(f64::from(i) / 10_000.0))
+            .map(|p| {
+                polyline
+                    .iter()
+                    .map(|line| line.nearest(p, 0.0).distance_sq)
+                    .fold(f64::INFINITY, f64::min)
+                    .sqrt()
+            })
+            .fold(0.0, f64::max);
+
+        assert!(deviation <= TOL, "{deviation} against {TOL}");
     }
 
     fn old_estimate(err_div: f64) -> usize {
