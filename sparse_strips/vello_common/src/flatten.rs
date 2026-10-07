@@ -228,12 +228,8 @@ pub fn stroke(
     stroke_ctx: &mut StrokeCtx,
     cull_bbox: RectU16,
 ) {
-    // TODO: Temporary hack to ensure that strokes are scaled properly by the transform.
-    let tolerance = TOL
-        / affine.as_coeffs()[0]
-            .abs()
-            .max(affine.as_coeffs()[3].abs())
-            .max(1.);
+    // The transform stretches a user unit to at most its spectral norm in device pixels.
+    let tolerance = TOL / affine.spectral_norm().max(1.);
 
     expand_stroke(path, style, tolerance, stroke_ctx);
     fill(

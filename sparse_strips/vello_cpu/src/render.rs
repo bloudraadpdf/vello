@@ -970,7 +970,7 @@ mod tests {
     use glifo::Glyph;
     use vello_common::color::PremulRgba8;
     use vello_common::color::palette::css::{BLUE, RED};
-    use vello_common::kurbo::{Affine, BezPath, Rect, Shape};
+    use vello_common::kurbo::{Affine, BezPath, Rect, Shape, Stroke};
     use vello_common::peniko::Fill;
     use vello_common::pixmap::{Pixmap, PixmapMut};
     use vello_common::tile::Tile;
@@ -1084,6 +1084,40 @@ mod tests {
                 .all(|error| error.abs() <= 1.0),
             "(rise, alpha - exact): {errors:?}"
         );
+    }
+
+    /// The pixels of an arch stroked under the linear map `[a, b, c, d]` about (64, 64).
+    fn stroked_arch([a, b, c, d]: [f64; 4]) -> Pixmap {
+        let mut ctx = RenderContext::new(128, 128);
+        ctx.set_paint(RED);
+        ctx.set_stroke(Stroke::new(0.1));
+        ctx.set_transform(Affine::new([a, b, c, d, 64.0, 64.0]));
+        let mut arch = BezPath::new();
+        arch.move_to((-0.5, -0.375));
+        arch.curve_to((-0.25, 0.625), (0.25, 0.625), (0.5, -0.375));
+        ctx.stroke_path(&arch);
+        ctx.flush();
+        let mut pixmap = Pixmap::new(128, 128);
+        ctx.render(&mut pixmap, &mut Resources::new());
+        pixmap
+    }
+
+    /// The quarter turn maps pixel `(x, y)` of the unturned stroke to pixel `(127 - y, x)`.
+    #[test]
+    fn a_stroke_under_a_quarter_turn_paints_as_the_stroke_unturned() {
+        let unturned = stroked_arch([100.0, 0.0, 0.0, 100.0]);
+        let turned = stroked_arch([0.0, 100.0, -100.0, 0.0]);
+
+        let largest = (0..128)
+            .flat_map(|y| (0..128).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                unturned
+                    .sample(x, y)
+                    .a
+                    .abs_diff(turned.sample(127 - y, x).a)
+            })
+            .max();
+        assert!(largest <= Some(1), "largest difference {largest:?}");
     }
 
     #[test]
