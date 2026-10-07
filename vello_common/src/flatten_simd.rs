@@ -9,7 +9,7 @@
 use crate::kurbo::common::FloatFuncs as _;
 use crate::kurbo::{CubicBez, Line, ParamCurve, ParamCurveNearest, PathEl, Point, QuadBez};
 use crate::{
-    flatten::{SQRT_TOL, TOL, TOL_2},
+    flatten::{TOL, TOL_2},
     geometry::RectU16,
     kurbo::Affine,
     tile::Tile,
@@ -155,8 +155,9 @@ pub(crate) fn flatten<S: Simd>(
                     callback.callback(LinePathEl::LineTo(p2));
                 } else {
                     let q = QuadBez::new(p0, p1, p2);
-                    let params = q.estimate_subdiv(SQRT_TOL);
-                    let n = ((0.5 / SQRT_TOL * params.val).ceil() as usize).max(1);
+                    let sqrt_tol = TOL.sqrt();
+                    let params = q.estimate_subdiv(sqrt_tol);
+                    let n = ((0.5 / sqrt_tol * params.val).ceil() as usize).max(1);
                     let step = 1.0 / (n as f64);
                     for i in 1..n {
                         let u = (i as f64) * step;
