@@ -970,7 +970,7 @@ mod tests {
     use glifo::Glyph;
     use vello_common::color::PremulRgba8;
     use vello_common::color::palette::css::{BLUE, RED};
-    use vello_common::kurbo::{Affine, Rect, Shape};
+    use vello_common::kurbo::{Affine, BezPath, Rect, Shape};
     use vello_common::peniko::Fill;
     use vello_common::pixmap::{Pixmap, PixmapMut};
     use vello_common::tile::Tile;
@@ -1041,6 +1041,48 @@ mod tests {
             "{} pixels differ, first {:?}",
             differing.len(),
             differing.first()
+        );
+    }
+
+    /// The alphas of pixels (4, 4) and (5, 4) under the curve `x = 4 + 2t`,
+    /// `y = 5 - 3t(1 - t) rise`, filled down to `y = 6`.
+    fn alphas_under_a_curve(rise: f64) -> [u8; 2] {
+        let mut ctx = RenderContext::new(16, 16);
+        ctx.set_paint(RED);
+        let mut path = BezPath::new();
+        path.move_to((4.0, 5.0));
+        path.curve_to(
+            (4.0 + 2.0 / 3.0, 5.0 - rise),
+            (4.0 + 4.0 / 3.0, 5.0 - rise),
+            (6.0, 5.0),
+        );
+        path.line_to((6.0, 6.0));
+        path.line_to((4.0, 6.0));
+        path.close_path();
+        ctx.fill_path(&path);
+        ctx.flush();
+        let mut pixmap = Pixmap::new(16, 16);
+        ctx.render(&mut pixmap, &mut Resources::new());
+        [pixmap.sample(4, 4).a, pixmap.sample(5, 4).a]
+    }
+
+    /// Each pixel covers `∫₀^½ 3t(1 - t) rise · 2 dt = rise / 2` of the area under the curve.
+    #[test]
+    fn a_pixel_under_a_curve_takes_its_exact_coverage_within_1_level() {
+        let errors = [0.33, 0.5, 1.0].map(|rise| {
+            let exact = 255.0 * rise / 2.0;
+            (
+                rise,
+                alphas_under_a_curve(rise).map(|alpha| f64::from(alpha) - exact),
+            )
+        });
+
+        assert!(
+            errors
+                .iter()
+                .flat_map(|(_, error)| error)
+                .all(|error| error.abs() <= 1.0),
+            "(rise, alpha - exact): {errors:?}"
         );
     }
 

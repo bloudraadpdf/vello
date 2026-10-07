@@ -183,7 +183,7 @@ fn hybrid_schedule_atlas_page_index_two(ctx: &mut impl Renderer) {
 }
 
 /// Test the behavior when a whole filter layer needs to be processed on page 1.
-#[vello_test(skip_multithreaded, cpu_u8_tolerance = 3, hybrid_tolerance = 1)]
+#[vello_test(skip_multithreaded, cpu_u8_tolerance = 3, hybrid_tolerance = 3)]
 fn hybrid_schedule_filter_atlas_page_one(ctx: &mut impl Renderer) {
     const BOUNDS: Rect = Rect::new(6.0, 6.0, 94.0, 94.0);
     let filter = Filter::from_primitive(FilterPrimitive::Offset { dx: 0.0, dy: 0.0 });

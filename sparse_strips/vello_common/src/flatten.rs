@@ -12,10 +12,10 @@ use log::warn;
 
 pub use crate::flatten_simd::FlattenCtx;
 
-// The current tolerance is set to 0.25. Since `sqrt` doesn't work in const contexts, we instead
-// hardcode the squared tolerance and derive the others from that.
-pub(crate) const SQRT_TOL: f64 = 0.5;
-pub(crate) const TOL: f64 = SQRT_TOL * SQRT_TOL;
+/// The flattening tolerance in device pixels. A line within `TOL` of its curve moves the coverage
+/// of a pixel by at most `TOL` times its length in the pixel, which is at most √2: half a level of
+/// 8-bit alpha. The rounded alpha of a pixel then stays within 1 level of its exact coverage.
+pub(crate) const TOL: f64 = 1.0 / (510.0 * core::f64::consts::SQRT_2);
 pub(crate) const TOL_2: f64 = TOL * TOL;
 
 /// A point.
