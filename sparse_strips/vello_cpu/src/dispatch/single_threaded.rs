@@ -3,7 +3,7 @@
 
 use crate::coarse::CommandBucketer;
 use crate::coarse::depth::DepthBuffer;
-use crate::dispatch::Dispatcher;
+use crate::dispatch::{Dispatcher, scene_window};
 use crate::filter::context::FilterContext;
 use crate::fine::{Fine, FineKernel, FineRenderParams, FineResources, rasterize_region};
 use crate::kurbo::{Affine, BezPath, Rect, Stroke};
@@ -110,15 +110,16 @@ impl SingleThreadedDispatcher {
     ) {
         let filters = self.rasterize_filter_layers::<S, F>(simd, encoded_paints, image_resolver);
         let use_src_over = settings.composite_mode == CompositeMode::SrcOver;
+        let window = scene_window(scene_width, scene_height, settings.scene_origin);
         let params = FineRenderParams {
-            scene_size: (scene_width, scene_height),
+            scene_size: (window.width(), window.height()),
             target_offset: settings.offset,
         };
 
         self.bucket_and_rasterize::<S, F>(
             simd,
             &self.recorder.nodes,
-            RectU16::new(0, 0, scene_width, scene_height),
+            window,
             &filters,
             target,
             params,

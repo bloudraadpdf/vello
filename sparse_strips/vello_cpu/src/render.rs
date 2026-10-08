@@ -31,6 +31,7 @@ use vello_common::peniko::color::palette::css::BLACK;
 use vello_common::peniko::{BlendMode, Fill};
 use vello_common::pixmap::{Pixmap, PixmapMut};
 use vello_common::render_state::RenderState;
+use vello_common::tile::Tile;
 use vello_common::transforms::{RootTransforms, Transforms};
 use vello_common::util::is_axis_aligned;
 
@@ -135,6 +136,12 @@ pub struct RasterizerSettings {
     ///
     /// See [`RenderContext::render_with`] for more information.
     pub offset: (u16, u16),
+    /// The pixel of the scene that the top-left of the rasterized area shows, a multiple of the
+    /// tile size on each axis. A target then holds the scene from that pixel on, at the same
+    /// coordinates as a render of the whole scene, for example a band of rows of a tall scene.
+    ///
+    /// See [`RenderContext::render_with`] for more information.
+    pub scene_origin: (u16, u16),
 }
 
 impl Default for RasterizerSettings {
@@ -144,6 +151,7 @@ impl Default for RasterizerSettings {
             composite_mode: CompositeMode::Replace,
             pixel_format: PixelFormat::Rgba8,
             offset: (0, 0),
+            scene_origin: (0, 0),
         }
     }
 }
@@ -790,6 +798,15 @@ impl RenderContext {
     /// 3. In case the width/height of the pixmap is _smaller_ than the offset + width/height of the
     ///    scene, then anything that exceeds the pixmap boundaries is simply cut off. This can be useful
     ///    if for some reason you only want to rasterize a small cut-out of the original scene.
+    ///
+    /// 4. [`RasterizerSettings::scene_origin`] defines the pixel of the scene that the rasterized
+    ///    area starts at: the scene from that pixel on takes the place of the whole scene above.
+    ///    Each pixel is the pixel of the same scene rasterized whole, so a tall scene can be
+    ///    rasterized 1 band of rows at a time.
+    ///
+    /// # Panics
+    ///
+    /// If the scene origin is not a multiple of the tile size on each axis.
     pub fn render_with<'a>(
         &self,
         target: impl Into<PixmapMut<'a>>,
@@ -802,11 +819,17 @@ impl RenderContext {
             "some layers haven't been popped yet"
         );
 
+        let (origin_x, origin_y) = settings.scene_origin;
+        assert!(
+            origin_x % Tile::WIDTH == 0 && origin_y % Tile::HEIGHT == 0,
+            "the scene origin must be a multiple of the tile size"
+        );
+
         resources.before_render(settings.render_mode);
         let mut target = target.into();
         let target_fully_covered = settings.offset == (0, 0)
-            && self.width >= target.width()
-            && self.height >= target.height();
+            && self.width.saturating_sub(origin_x) >= target.width()
+            && self.height.saturating_sub(origin_y) >= target.height();
         // If the scene covers the whole pixmap than packing will take care
         // of clearing everything anyway, so no reason to clear it explicitly
         // here.
@@ -1131,6 +1154,103 @@ mod tests {
         ctx.push_clip_layer(&Rect::new(20.0, 20.0, 180.0, 180.0).to_path(0.1));
         ctx.pop_layer();
         ctx.flush();
+    }
+
+    /// A mask of the whole scene: rows of 3 grey levels.
+    fn striped_mask() -> vello_common::mask::Mask {
+        let mut stripes = RenderContext::new(64, 2_000);
+        for row in (0..2_000).step_by(3) {
+            stripes.set_paint(
+                vello_common::color::AlphaColor::<vello_common::color::Srgb>::from_rgba8(
+                    0,
+                    0,
+                    0,
+                    (row % 251) as u8,
+                ),
+            );
+            stripes.fill_rect(&Rect::new(0.0, f64::from(row), 64.0, f64::from(row) + 3.0));
+        }
+        stripes.flush();
+        let mut pixmap = Pixmap::new(64, 2_000);
+        stripes.render(&mut pixmap, &mut Resources::new());
+        vello_common::mask::Mask::new_alpha(&pixmap)
+    }
+
+    /// A scene of curves, a gradient, a clip layer, an opacity layer, a masked layer and a masked
+    /// draw on 64 by 2,000 pixels.
+    fn tall_scene() -> RenderContext {
+        use vello_common::peniko::{ColorStop, Gradient};
+
+        let mut ctx = RenderContext::new(64, 2_000);
+        let mask = striped_mask();
+        ctx.push_mask_layer(mask.clone());
+        ctx.set_paint(BLUE);
+        ctx.fill_rect(&Rect::new(1.0, 0.0, 9.0, 2_000.0));
+        ctx.pop_layer();
+        ctx.set_mask(mask);
+        ctx.set_paint(RED);
+        ctx.fill_rect(&Rect::new(55.0, 0.0, 63.0, 2_000.0));
+        ctx.reset_mask();
+        for step in 0..40_u16 {
+            let y = f64::from(step) * 49.7 + 0.3;
+            ctx.set_paint(RED);
+            ctx.fill_path(&vello_common::kurbo::Circle::new((20.3, y + 10.1), 9.7).to_path(0.01));
+            ctx.push_clip_layer(&Rect::new(30.2, y, 61.7, y + 40.9).to_path(0.1));
+            ctx.push_opacity_layer(0.6);
+            ctx.set_paint(
+                Gradient::new_linear((30.0, y), (62.0, y + 40.0)).with_stops(
+                    [
+                        ColorStop::from((0.0_f32, BLUE)),
+                        ColorStop::from((1.0_f32, RED)),
+                    ]
+                    .as_slice(),
+                ),
+            );
+            ctx.fill_path(
+                &vello_common::kurbo::Ellipse::new((46.0, y + 20.0), (18.3, 23.1), 0.4)
+                    .to_path(0.01),
+            );
+            ctx.pop_layer();
+            ctx.pop_layer();
+        }
+        ctx.flush();
+        ctx
+    }
+
+    /// Each band of rows from its scene origin holds its rows of the scene rasterized whole, each
+    /// mask sampled at the pixels of the whole scene.
+    #[test]
+    fn a_band_from_its_scene_origin_holds_its_rows_of_the_whole_scene() {
+        let ctx = tall_scene();
+        let mut resources = Resources::new();
+        let mut whole = Pixmap::new(64, 2_000);
+        ctx.render(&mut whole, &mut resources);
+
+        for (top, rows) in (0..2_000)
+            .step_by(64)
+            .map(|top| (top, 64.min(2_000 - top)))
+            .chain((0..64).step_by(8).map(|top| (top, 8)))
+        {
+            let mut band = Pixmap::new(64, rows);
+            ctx.render_with(
+                &mut band,
+                &mut resources,
+                RasterizerSettings {
+                    scene_origin: (0, top),
+                    ..Default::default()
+                },
+            );
+            for y in 0..rows {
+                for x in 0..64 {
+                    assert_eq!(
+                        band.sample(x, y),
+                        whole.sample(x, top + y),
+                        "pixel ({x}, {})",
+                        top + y
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -433,6 +433,7 @@ impl CommandBucketer {
                 mask: layer.mask.clone(),
                 draw_id,
                 thread_idx: clip.thread_idx,
+                origin: self.viewport_origin(),
             });
             self.clip_bboxes.pop();
 
@@ -494,6 +495,7 @@ impl CommandBucketer {
                 mask: layer.mask.clone(),
                 draw_id,
                 thread_idx: 0,
+                origin: self.viewport_origin(),
             });
 
             for row_idx in layer.occupied_rows.drain(..) {
