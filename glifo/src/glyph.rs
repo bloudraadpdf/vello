@@ -372,7 +372,7 @@ impl<'a, 'b, Glyphs: Iterator<Item = Glyph> + Clone> GlyphRunRenderer<'a, 'b, Gl
         let PreparedGlyphRun {
             draw_props,
             scene_paint_transform,
-            run_size: _,
+            run_size,
             font_info,
             font_embolden,
             normalized_coords,
@@ -398,7 +398,7 @@ impl<'a, 'b, Glyphs: Iterator<Item = Glyph> + Clone> GlyphRunRenderer<'a, 'b, Gl
         let context_color = renderer.get_context_color();
         let context_color_packed = pack_color(context_color);
         let scale_props =
-            GlyphScaleProperties::new(draw_props.font_size, font_info.upem, hinted, style);
+            GlyphScaleProperties::new(draw_props, run_size, font_info.upem, hinted, style);
 
         for glyph in self.glyph_iterator.clone() {
             // TODO: Add a mechanism such that glyphs that are completely outside of the viewport
@@ -729,13 +729,14 @@ impl<'a, 'b, Glyphs: Iterator<Item = Glyph> + Clone> GlyphRunRenderer<'a, 'b, Gl
         // to the nominal coordinate space. The glyph-drawing path handles this by
         // simply drawing in global space, but we need to invert it for drawing decorations.
         let scale_props = GlyphScaleProperties::new(
-            draw_props.font_size,
+            draw_props,
+            self.prepared_run.run_size,
             font_info.upem,
             hinting_instance.is_some(),
             Style::Fill,
         );
         let outline_to_nominal_scale =
-            f64::from(self.prepared_run.run_size / scale_props.cache_size);
+            f64::from(self.prepared_run.run_size) / f64::from(scale_props.cache_size);
         let outline_transform = self
             .prepared_run
             .glyph_transform
@@ -1134,7 +1135,8 @@ struct GlyphScaleProperties {
 }
 
 impl GlyphScaleProperties {
-    fn new(draw_font_size: f32, upem: f32, hinted: bool, style: Style) -> Self {
+    fn new(draw_props: DrawProps, run_size: f32, upem: f32, hinted: bool, style: Style) -> Self {
+        let draw_font_size = draw_props.font_size;
         if hinted || style == Style::Stroke {
             // For hinting, we need to preserve the original font size since outlines are
             // scale-dependent.
@@ -1149,7 +1151,7 @@ impl GlyphScaleProperties {
         } else {
             Self {
                 cache_size: upem,
-                draw_scale: f64::from(draw_font_size / upem),
+                draw_scale: f64::from(run_size) * draw_props.absorbed_scale / f64::from(upem),
             }
         }
     }
@@ -1511,6 +1513,9 @@ struct DrawProps {
     /// The actual font size that should be assumed for drawing and caching
     /// purposes.
     font_size: f32,
+    /// The scale of the run that `font_size` absorbs, 1 without absorption. The outline of an
+    /// unhinted fill takes it in `f64`, as `font_size` rounds it to `f32`.
+    absorbed_scale: f64,
 }
 
 impl DrawProps {
@@ -1648,6 +1653,11 @@ fn prepare_glyph_run<'a>(run: GlyphRun<'a>, hint_cache: &'a mut HintCache) -> Pr
                 .with_translation(Vec2::ZERO),
             effective_transform,
             font_size: draw_font_size,
+            absorbed_scale: match mode {
+                PreparedGlyphRunMode::Direct => 1.0,
+                PreparedGlyphRunMode::AbsorbScaleUnhinted
+                | PreparedGlyphRunMode::AbsorbScaleHinted => t_d,
+            },
         },
         scene_paint_transform: run.scene_paint_transform,
         normalized_coords: run.normalized_coords,
@@ -2216,13 +2226,16 @@ mod tests {
         Bitmap,
     }
 
+    /// A renderer that records the transform of each draw.
     #[derive(Default)]
-    struct NoopRenderer;
+    struct TestRenderer {
+        transforms: Vec<Affine>,
+    }
 
     static BLACK_PAINT: PaintType = PaintType::Solid(BLACK);
 
     struct TestResources {
-        renderer: NoopRenderer,
+        renderer: TestRenderer,
         prep_cache: GlyphPrepCache,
         glyph_atlas: GlyphAtlas,
         image_cache: ImageCache,
@@ -2231,7 +2244,7 @@ mod tests {
     impl Default for TestResources {
         fn default() -> Self {
             Self {
-                renderer: NoopRenderer,
+                renderer: TestRenderer::default(),
                 prep_cache: GlyphPrepCache::default(),
                 glyph_atlas: GlyphAtlas::default(),
                 image_cache: ImageCache::new_with_config(AtlasConfig {
@@ -2242,8 +2255,10 @@ mod tests {
         }
     }
 
-    impl DrawSink for NoopRenderer {
-        fn set_transform(&mut self, _t: Affine) {}
+    impl DrawSink for TestRenderer {
+        fn set_transform(&mut self, t: Affine) {
+            self.transforms.push(t);
+        }
 
         fn set_paint(&mut self, _paint: AtlasPaint) {}
 
@@ -2268,7 +2283,7 @@ mod tests {
         }
     }
 
-    impl GlyphRenderer for NoopRenderer {
+    impl GlyphRenderer for TestRenderer {
         type SavedState = ();
 
         fn save_state(&mut self) -> Self::SavedState {}
@@ -2357,6 +2372,36 @@ mod tests {
             Style::Fill => run.fill_glyphs(&mut resources.renderer),
             Style::Stroke => run.stroke_glyphs(&mut resources.renderer),
         }
+    }
+
+    /// An unhinted run under a uniform scale draws each outline at the size of the run times the scale, in `f64`: the
+    /// absorbed size in `f32` rounds the scale of the outline.
+    #[test]
+    fn an_absorbed_scale_draws_outlines_at_the_f64_scale_of_the_run() {
+        let font = test_font(TestGlyphKind::Outline);
+        let glyph = test_glyph(&font, TestGlyphKind::Outline);
+        let scale = 1.1 * 4.0 / 3.0;
+        let mut resources = TestResources::default();
+        GlyphRun {
+            font: font.clone(),
+            font_size: 13.7,
+            font_embolden: FontEmbolden::default(),
+            transform: Affine::scale(scale),
+            scene_paint_transform: Affine::scale(scale),
+            glyph_transform: None,
+            normalized_coords: &[],
+            hint: false,
+        }
+        .build(
+            core::iter::once(glyph),
+            resources.prep_cache.as_mut(),
+            AtlasCacher::Disabled,
+        )
+        .fill_glyphs(&mut resources.renderer);
+
+        let upem = f64::from(font.as_skrifa().head().unwrap().units_per_em());
+        let drawn = resources.renderer.transforms.last().unwrap().as_coeffs()[0];
+        assert_eq!(drawn, f64::from(13.7_f32) * scale / upem);
     }
 
     fn ensure_cache(kind: TestGlyphKind, style: Style) {
