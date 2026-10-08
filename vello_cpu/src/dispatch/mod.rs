@@ -11,9 +11,15 @@ use crate::peniko::{BlendMode, Fill};
 use core::fmt::Debug;
 use vello_common::encode::EncodedPaint;
 use vello_common::filter::FilterData;
+use vello_common::geometry::RectU16;
 use vello_common::mask::Mask;
 use vello_common::paint::{ImageResolver, Paint};
 use vello_common::pixmap::PixmapMut;
+
+/// The part of a scene of `width` by `height` pixels from `origin` on.
+pub(crate) fn scene_window(width: u16, height: u16, (x, y): (u16, u16)) -> RectU16 {
+    RectU16::new(x.min(width), y.min(height), width, height)
+}
 
 pub(crate) trait Dispatcher: Debug + Send {
     fn has_layers(&self) -> bool;

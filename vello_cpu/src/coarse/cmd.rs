@@ -131,6 +131,9 @@ pub(crate) struct LayerFillAttrs {
     /// In case there is any alpha associated with the layer command, this stores
     /// the index of the thread that stores the alpha.
     pub(crate) thread_idx: u8,
+    /// See the comment in `CommandBucketer::bucket_commands`: the mask of the layer samples
+    /// each pixel at this offset.
+    pub(crate) origin: (u16, u16),
 }
 
 #[cfg(test)]

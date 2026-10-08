@@ -759,7 +759,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                         span,
                         attrs.blend_mode,
                         attrs.opacity,
-                        attrs.mask.as_ref(),
+                        attrs.mask.as_ref().map(|mask| (mask, attrs.origin)),
                         alphas,
                     );
                 };
@@ -790,12 +790,21 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
         );
     }
 
-    fn mask(&mut self, row_y: u16, span: TileAlignedSpan, mask: &Mask) {
-        let x = span.pixel_x();
+    /// Applies `mask` to the pixels of `span` in the row at `row_y`, sampled at the pixels of the
+    /// scene from `origin` on.
+    fn mask(
+        &mut self,
+        row_y: u16,
+        span: TileAlignedSpan,
+        mask: &Mask,
+        (origin_x, origin_y): (u16, u16),
+    ) {
+        let x = span.pixel_x().saturating_add(origin_x);
         let width = span.pixel_width();
         let target = self.blend_buffers.last_mut().unwrap();
         let target = &mut target[Self::scratch_range(span)];
-        let y = u32::from(row_y) + u32x4::from_slice(self.simd, &[0, 1, 2, 3]);
+        let y =
+            u32::from(row_y.saturating_add(origin_y)) + u32x4::from_slice(self.simd, &[0, 1, 2, 3]);
         let iter = (x..x.saturating_add(width)).map(|x| {
             let x_in_range = x < mask.width();
 
@@ -832,14 +841,14 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
         span: TileAlignedSpan,
         blend_mode: BlendMode,
         opacity: f32,
-        mask: Option<&Mask>,
+        mask: Option<(&Mask, (u16, u16))>,
         alphas: Option<&[u8]>,
     ) {
         if opacity != 1.0 {
             self.opacity(span, opacity);
         }
-        if let Some(mask) = mask {
-            self.mask(row_y, span, mask);
+        if let Some((mask, origin)) = mask {
+            self.mask(row_y, span, mask, origin);
         }
 
         let x = span.pixel_x();
@@ -908,7 +917,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
             return;
         }
 
-        let x = span.pixel_x();
+        let x = span.pixel_x().saturating_add(self.origin.0);
         let color = T::extract_color(color);
         let simd = self.simd;
         let color = T::Composite::from_color(simd, color);
@@ -917,7 +926,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
             simd,
             &mut scratch[Self::scratch_range(span)],
             x,
-            self.row_y,
+            self.row_y.saturating_add(self.origin.1),
             iter::repeat(color),
             attrs.blend_mode,
             alphas,
@@ -987,8 +996,8 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                         T::blend(
                             simd,
                             dest,
-                            x,
-                            y,
+                            sample_x,
+                            sample_y,
                             color_buf
                                 .chunks_exact(T::Composite::LENGTH)
                                 .map(|s| T::Composite::from_slice(simd, s)),
