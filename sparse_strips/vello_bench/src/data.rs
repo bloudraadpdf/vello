@@ -10,6 +10,7 @@ use vello_common::flatten::{FlattenCtx, Line};
 use vello_common::geometry::RectU16;
 use vello_common::kurbo::{Affine, BezPath, Stroke, StrokeCtx};
 use vello_common::peniko::Fill;
+use vello_common::strip::Aliasing;
 use vello_common::strip::Strip;
 use vello_common::tile::Tiles;
 use vello_common::{flatten, strip};
@@ -134,7 +135,13 @@ impl DataItem {
     pub fn unsorted_tiles(&self) -> Tiles {
         let mut tiles = Tiles::new(Level::new(), self.width, self.height);
         let lines = self.lines();
-        tiles.make_tiles_analytic_aa(Level::new(), &lines, self.width, self.height);
+        tiles.make_tiles_analytic_aa(
+            Level::new(),
+            &lines,
+            self.width,
+            self.height,
+            Aliasing::AntiAliased,
+        );
 
         tiles
     }
@@ -160,7 +167,7 @@ impl DataItem {
             &mut strip_buf,
             &mut alpha_buf,
             Fill::NonZero,
-            None,
+            Aliasing::AntiAliased,
             &lines,
         );
 

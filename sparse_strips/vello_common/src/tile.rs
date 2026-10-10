@@ -4,6 +4,7 @@
 //! Primitives for creating tiles.
 
 use crate::flatten::Line;
+use crate::strip::Aliasing;
 use alloc::vec;
 use alloc::vec::Vec;
 use fearless_simd::*;
@@ -511,18 +512,22 @@ impl Tiles {
     /// function performs "coarse binning" to simply identify every tile a line segment traverses.
     /// It encodes the line index and winding direction, delegating the precise calculation of pixel
     /// coverage to `strip::render`.
+    ///
+    /// `aliasing` decides how the winding of lines left of the viewport covers the rows of the first tile column.
     pub fn make_tiles_analytic_aa(
         &mut self,
         level: Level,
         lines: &[Line],
         width: u16,
         height: u16,
+        aliasing: Aliasing,
     ) -> bool {
         dispatch!(level, simd => self.make_tiles_analytic_aa_impl::<_>(
             simd,
             lines,
             width,
             height,
+            aliasing,
         ))
     }
 
@@ -533,6 +538,7 @@ impl Tiles {
         lines: &[Line],
         width: u16,
         height: u16,
+        aliasing: Aliasing,
     ) -> bool {
         self.reset(width, height);
 
@@ -607,7 +613,17 @@ impl Tiles {
                     let start_v = f32x4::splat(s, local_y_start);
                     let end_v = f32x4::splat(s, local_y_end);
 
-                    (px_bottom.min(end_v) - px_top.max(start_v)).max(simd_zero)
+                    if aliasing == Aliasing::PixelCentre {
+                        // The segment winds a row when it holds the centre row of its pixels: `[start, end)`.
+                        let centre = px_top + 0.5;
+                        s.select_f32x4(
+                            s.and_mask32x4(s.simd_ge_f32x4(centre, start_v), s.simd_lt_f32x4(centre, end_v)),
+                            f32x4::splat(s, 1.0),
+                            simd_zero,
+                        )
+                    } else {
+                        (px_bottom.min(end_v) - px_top.max(start_v)).max(simd_zero)
+                    }
                 }};
             }
 
@@ -1314,6 +1330,7 @@ mod tests {
     use crate::flatten::{FlattenCtx, Line, Point, fill};
     use crate::geometry::RectU16;
     use crate::kurbo::{Affine, BezPath};
+    use crate::strip::Aliasing;
     use crate::tile::CulledWindings;
     use crate::tile::{B, L, R, T, Tile, Tiles, W};
     use fearless_simd::Level;
@@ -1341,7 +1358,13 @@ mod tests {
             self.make_tiles_msaa(lines, width, height);
             assert_eq!(self.tile_buf, expected, "MSAA: Tile buffer mismatch");
 
-            self.make_tiles_analytic_aa(Level::baseline(), lines, width, height);
+            self.make_tiles_analytic_aa(
+                Level::baseline(),
+                lines,
+                width,
+                height,
+                Aliasing::AntiAliased,
+            );
             check_analytic_aa_matches(&self.tile_buf, expected);
         }
     }
@@ -2275,7 +2298,13 @@ mod tests {
         }];
 
         let mut tiles = Tiles::new(Level::baseline(), HEIGHT, HEIGHT);
-        tiles.make_tiles_analytic_aa(Level::baseline(), &lines, WIDTH, HEIGHT);
+        tiles.make_tiles_analytic_aa(
+            Level::baseline(),
+            &lines,
+            WIDTH,
+            HEIGHT,
+            Aliasing::AntiAliased,
+        );
 
         let row = |y: u16| -> Vec<Tile> {
             tiles
@@ -2517,7 +2546,7 @@ mod tests {
 
         let mut tiles = new_tiles();
         tiles.make_tiles_msaa(&[line], 600, 600);
-        tiles.make_tiles_analytic_aa(Level::baseline(), &[line], 600, 600);
+        tiles.make_tiles_analytic_aa(Level::baseline(), &[line], 600, 600, Aliasing::AntiAliased);
     }
 
     #[test]
@@ -2535,7 +2564,7 @@ mod tests {
         };
 
         let mut tiles = new_tiles();
-        tiles.make_tiles_analytic_aa(Level::baseline(), &[line], 200, 100);
+        tiles.make_tiles_analytic_aa(Level::baseline(), &[line], 200, 100, Aliasing::AntiAliased);
         tiles.make_tiles_msaa(&[line], 200, 100);
     }
 
@@ -2571,7 +2600,13 @@ mod tests {
         tiles.sort_tiles();
         check_sorted(&tiles.tile_buf);
 
-        tiles.make_tiles_analytic_aa(Level::baseline(), &lines, VIEW_DIM, VIEW_DIM);
+        tiles.make_tiles_analytic_aa(
+            Level::baseline(),
+            &lines,
+            VIEW_DIM,
+            VIEW_DIM,
+            Aliasing::AntiAliased,
+        );
         assert!(tiles.tile_buf.first().unwrap().y > tiles.tile_buf.last().unwrap().y);
         tiles.sort_tiles();
         check_sorted(&tiles.tile_buf);

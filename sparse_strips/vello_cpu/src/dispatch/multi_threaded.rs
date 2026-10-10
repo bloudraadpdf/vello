@@ -34,6 +34,7 @@ use vello_common::mask::Mask;
 use vello_common::paint::{ImageResolver, Paint};
 use vello_common::pixmap::PixmapMut;
 use vello_common::record::{CommandRecorder, LayerClip, LayerProps, PoppedLayer};
+use vello_common::strip::Aliasing;
 use vello_common::strip::Strip;
 use vello_common::strip_generator::{GenerationMode, StripGenerator, StripStorage};
 
@@ -470,7 +471,7 @@ impl Dispatcher for MultiThreadedDispatcher {
         transform: Affine,
         paint: Paint,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     ) {
         let start = self.allocation_group.path.len() as u32;
@@ -482,7 +483,7 @@ impl Dispatcher for MultiThreadedDispatcher {
             paint,
             fill_rule,
             blend_mode,
-            aliasing_threshold,
+            aliasing,
             mask,
         });
     }
@@ -494,7 +495,7 @@ impl Dispatcher for MultiThreadedDispatcher {
         transform: Affine,
         paint: Paint,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     ) {
         let start = self.allocation_group.path.len() as u32;
@@ -506,7 +507,7 @@ impl Dispatcher for MultiThreadedDispatcher {
             paint,
             stroke: stroke.clone(),
             blend_mode,
-            aliasing_threshold,
+            aliasing,
             mask,
         });
     }
@@ -535,7 +536,7 @@ impl Dispatcher for MultiThreadedDispatcher {
             paint,
             fill_rule: Fill::NonZero,
             blend_mode,
-            aliasing_threshold: None,
+            aliasing: Aliasing::AntiAliased,
             mask,
         });
     }
@@ -547,7 +548,7 @@ impl Dispatcher for MultiThreadedDispatcher {
         clip_transform: Affine,
         blend_mode: BlendMode,
         opacity: f32,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
         filter_data: Option<FilterData>,
     ) {
@@ -572,7 +573,7 @@ impl Dispatcher for MultiThreadedDispatcher {
             opacity,
             mask,
             fill_rule,
-            aliasing_threshold,
+            aliasing,
         });
         self.layer_depth += 1;
     }
@@ -702,7 +703,7 @@ impl Dispatcher for MultiThreadedDispatcher {
         path: &BezPath,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         self.flush_tasks();
         self.clip_context.push_clip(
@@ -710,7 +711,7 @@ impl Dispatcher for MultiThreadedDispatcher {
             &mut self.strip_generator,
             fill_rule,
             transform,
-            aliasing_threshold,
+            aliasing,
         );
     }
 
@@ -848,7 +849,7 @@ pub(crate) enum RenderTaskType {
         paint: Paint,
         fill_rule: Fill,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     },
     StrokePath {
@@ -857,7 +858,7 @@ pub(crate) enum RenderTaskType {
         paint: Paint,
         stroke: Stroke,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     },
     PushLayer {
@@ -866,7 +867,7 @@ pub(crate) enum RenderTaskType {
         opacity: f32,
         mask: Option<Mask>,
         fill_rule: Fill,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     },
     PopLayer,
 }
@@ -948,6 +949,7 @@ mod tests {
     use crate::kurbo::{Affine, Rect, Shape};
     use crate::peniko::{BlendMode, Fill};
     use vello_common::paint::{Paint, PremulColor};
+    use vello_common::strip::Aliasing;
 
     /// Ensure we don't cause a memory leak.
     #[test]
@@ -960,7 +962,7 @@ mod tests {
                 Affine::IDENTITY,
                 Paint::Solid(PremulColor::from_alpha_color(BLUE)),
                 BlendMode::default(),
-                None,
+                Aliasing::AntiAliased,
                 None,
             );
             dispatcher.flush();

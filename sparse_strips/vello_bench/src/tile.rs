@@ -5,6 +5,7 @@ use crate::data::get_data_items;
 use crate::strip::shift_lines_50_percent;
 use criterion::{BenchmarkId, Criterion};
 use vello_common::flatten::Line;
+use vello_common::strip::Aliasing;
 use vello_common::tile::Tiles;
 use vello_cpu::Level;
 
@@ -34,7 +35,7 @@ where
 
 pub fn tile(c: &mut Criterion) {
     run_tile_benchmark::<false, _>(c, "tile_aaa", |tiler, lines, w, h| {
-        tiler.make_tiles_analytic_aa(Level::new(), lines, w, h);
+        tiler.make_tiles_analytic_aa(Level::new(), lines, w, h, Aliasing::AntiAliased);
     });
 
     run_tile_benchmark::<false, _>(c, "tile_msaa", |tiler, lines, w, h| {
@@ -42,6 +43,6 @@ pub fn tile(c: &mut Criterion) {
     });
 
     run_tile_benchmark::<true, _>(c, "tile_aaa_shift50", |tiler, lines, w, h| {
-        tiler.make_tiles_analytic_aa(Level::new(), lines, w, h);
+        tiler.make_tiles_analytic_aa(Level::new(), lines, w, h, Aliasing::AntiAliased);
     });
 }

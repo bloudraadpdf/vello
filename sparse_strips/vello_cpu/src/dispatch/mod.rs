@@ -15,6 +15,7 @@ use vello_common::geometry::RectU16;
 use vello_common::mask::Mask;
 use vello_common::paint::{ImageResolver, Paint};
 use vello_common::pixmap::PixmapMut;
+use vello_common::strip::Aliasing;
 
 /// The part of a scene of `width` by `height` pixels from `origin` on.
 pub(crate) fn scene_window(width: u16, height: u16, (x, y): (u16, u16)) -> RectU16 {
@@ -30,7 +31,7 @@ pub(crate) trait Dispatcher: Debug + Send {
         transform: Affine,
         paint: Paint,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     );
     fn stroke_path(
@@ -40,7 +41,7 @@ pub(crate) trait Dispatcher: Debug + Send {
         transform: Affine,
         paint: Paint,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     );
     /// Fill a pixel-aligned rectangle with the current paint.
@@ -56,7 +57,7 @@ pub(crate) trait Dispatcher: Debug + Send {
         path: &BezPath,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     );
     fn pop_clip_path(&mut self);
     fn push_layer(
@@ -66,7 +67,7 @@ pub(crate) trait Dispatcher: Debug + Send {
         clip_transform: Affine,
         blend_mode: BlendMode,
         opacity: f32,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
         filter_data: Option<FilterData>,
     );

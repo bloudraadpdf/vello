@@ -9,6 +9,7 @@ use crate::flatten::{FlattenCtx, Line};
 use crate::geometry::RectU16;
 use crate::kurbo::{Affine, PathEl, Rect, Stroke};
 use crate::peniko::Fill;
+use crate::strip::Aliasing;
 use crate::strip::Strip;
 use crate::tile::Tiles;
 use crate::{flatten, rect, strip};
@@ -122,7 +123,7 @@ impl StripGenerator {
         path: impl IntoIterator<Item = PathEl>,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         strip_storage: &mut StripStorage,
         clip_path: Option<PathDataRef<'_>>,
     ) {
@@ -138,7 +139,7 @@ impl StripGenerator {
             cull_bbox,
         );
 
-        self.generate_with_clip(aliasing_threshold, strip_storage, fill_rule, clip_path);
+        self.generate_with_clip(aliasing, strip_storage, fill_rule, clip_path);
     }
 
     /// Generate the strips for a stroked path.
@@ -147,7 +148,7 @@ impl StripGenerator {
         path: impl IntoIterator<Item = PathEl>,
         stroke: &Stroke,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         strip_storage: &mut StripStorage,
         clip_path: Option<PathDataRef<'_>>,
     ) {
@@ -164,18 +165,23 @@ impl StripGenerator {
             &mut self.stroke_ctx,
             cull_bbox,
         );
-        self.generate_with_clip(aliasing_threshold, strip_storage, Fill::NonZero, clip_path);
+        self.generate_with_clip(aliasing, strip_storage, Fill::NonZero, clip_path);
     }
 
     fn generate_with_clip(
         &mut self,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         strip_storage: &mut StripStorage,
         fill_rule: Fill,
         clip_path: Option<PathDataRef<'_>>,
     ) {
-        self.tiles
-            .make_tiles_analytic_aa(self.level, &self.line_buf, self.width, self.height);
+        self.tiles.make_tiles_analytic_aa(
+            self.level,
+            &self.line_buf,
+            self.width,
+            self.height,
+            aliasing,
+        );
 
         self.tiles.sort_tiles();
 
@@ -188,15 +194,7 @@ impl StripGenerator {
             strip_storage,
             clip_path,
             |strips, alphas| {
-                strip::render(
-                    level,
-                    tiles,
-                    strips,
-                    alphas,
-                    fill_rule,
-                    aliasing_threshold,
-                    line_buf,
-                );
+                strip::render(level, tiles, strips, alphas, fill_rule, aliasing, line_buf);
             },
         );
     }
@@ -289,6 +287,7 @@ mod tests {
     use crate::fearless_simd::Level;
     use crate::kurbo::{Affine, Rect, Shape};
     use crate::peniko::Fill;
+    use crate::strip::Aliasing;
     use crate::strip_generator::{StripGenerator, StripStorage};
 
     #[test]
@@ -301,7 +300,7 @@ mod tests {
             rect.to_path(0.1),
             Fill::NonZero,
             Affine::IDENTITY,
-            None,
+            Aliasing::AntiAliased,
             &mut storage,
             None,
         );
@@ -327,7 +326,7 @@ mod tests {
             rect.to_path(0.1),
             Fill::NonZero,
             Affine::IDENTITY,
-            None,
+            Aliasing::AntiAliased,
             &mut storage_path,
             None,
         );

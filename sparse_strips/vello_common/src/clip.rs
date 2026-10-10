@@ -5,6 +5,7 @@
 
 use crate::geometry::RectU16;
 use crate::kurbo::{Affine, BezPath, PathEl};
+use crate::strip::Aliasing;
 use crate::strip::Strip;
 use crate::strip_generator::{GenerationMode, StripGenerator, StripStorage};
 use crate::tile::Tile;
@@ -93,7 +94,7 @@ impl ClipContext {
         strip_generator: &mut StripGenerator,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         self.temp_storage.clear();
 
@@ -109,7 +110,7 @@ impl ClipContext {
             clip_path,
             fill_rule,
             transform,
-            aliasing_threshold,
+            aliasing,
             &mut self.temp_storage,
             existing_clip,
         );
@@ -141,7 +142,7 @@ struct RawClip {
     path: Range<usize>,
     fill_rule: Fill,
     transform: Affine,
-    aliasing_threshold: Option<u8>,
+    aliasing: Aliasing,
 }
 
 /// A frame containing clipping-relevant state for the root layer or a filter layer.
@@ -248,7 +249,7 @@ impl ClipState {
         strip_generator: &mut StripGenerator,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         let path_start = self.path_elements.len();
         self.path_elements.extend(path.iter());
@@ -260,13 +261,13 @@ impl ClipState {
             strip_generator,
             fill_rule,
             clip_transform,
-            aliasing_threshold,
+            aliasing,
         );
         self.raw_clips.push(RawClip {
             path,
             fill_rule,
             transform,
-            aliasing_threshold,
+            aliasing,
         });
         self.revision = self.revision.wrapping_add(1);
     }
@@ -305,7 +306,7 @@ impl ClipState {
                 strip_generator,
                 raw_clip.fill_rule,
                 active_shift * raw_clip.transform,
-                raw_clip.aliasing_threshold,
+                raw_clip.aliasing,
             );
         }
     }

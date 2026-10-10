@@ -70,7 +70,7 @@ impl Worker {
                     paint,
                     fill_rule,
                     blend_mode,
-                    aliasing_threshold,
+                    aliasing,
                     mask,
                 } => {
                     let start = self.strip_storage.strips.len() as u32;
@@ -81,7 +81,7 @@ impl Worker {
                         path.iter().copied(),
                         fill_rule,
                         transform,
-                        aliasing_threshold,
+                        aliasing,
                         &mut self.strip_storage,
                         path_clip,
                     );
@@ -106,7 +106,7 @@ impl Worker {
                     paint,
                     blend_mode,
                     stroke,
-                    aliasing_threshold,
+                    aliasing,
                     mask,
                 } => {
                     let start = self.strip_storage.strips.len() as u32;
@@ -117,7 +117,7 @@ impl Worker {
                         path.iter().copied(),
                         &stroke,
                         transform,
-                        aliasing_threshold,
+                        aliasing,
                         &mut self.strip_storage,
                         path_clip,
                     );
@@ -142,7 +142,7 @@ impl Worker {
                     opacity,
                     mask,
                     fill_rule,
-                    aliasing_threshold,
+                    aliasing,
                 } => {
                     let (clip, clip_bbox) = if let Some((path_range, transform)) = clip_path {
                         let start = self.strip_storage.strips.len() as u32;
@@ -153,7 +153,7 @@ impl Worker {
                             path.iter().copied(),
                             fill_rule,
                             transform,
-                            aliasing_threshold,
+                            aliasing,
                             &mut self.strip_storage,
                             path_clip,
                         );

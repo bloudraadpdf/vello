@@ -7,6 +7,7 @@ use vello_common::fearless_simd::Level;
 use vello_common::flatten::Line;
 use vello_common::kurbo::{Affine, Rect, Shape};
 use vello_common::peniko::Fill;
+use vello_common::strip::Aliasing;
 use vello_common::strip_generator::{StripGenerator, StripStorage};
 use vello_common::tile::Tiles;
 
@@ -55,7 +56,7 @@ pub fn render_strips(c: &mut Criterion) {
                         &mut strip_buf,
                         &mut alpha_buf,
                         Fill::NonZero,
-                        None,
+                        Aliasing::AntiAliased,
                         &lines,
                     );
                     std::hint::black_box((&strip_buf, &alpha_buf));
@@ -88,7 +89,13 @@ pub fn render_strips_cull(c: &mut Criterion) {
         let shifted_lines = shift_lines_50_percent(&item.lines());
 
         let mut tiler = Tiles::new(simd_level, item.width, item.height);
-        tiler.make_tiles_analytic_aa(simd_level, &shifted_lines, item.width, item.height);
+        tiler.make_tiles_analytic_aa(
+            simd_level,
+            &shifted_lines,
+            item.width,
+            item.height,
+            Aliasing::AntiAliased,
+        );
         tiler.sort_tiles();
 
         g_cull.bench_function(item.name.clone().to_string(), |b| {
@@ -105,7 +112,7 @@ pub fn render_strips_cull(c: &mut Criterion) {
                     &mut strip_buf,
                     &mut alpha_buf,
                     Fill::NonZero,
-                    None,
+                    Aliasing::AntiAliased,
                     &shifted_lines,
                 );
                 std::hint::black_box((&strip_buf, &alpha_buf));
@@ -135,7 +142,7 @@ pub fn render_rect(c: &mut Criterion) {
                 rect.to_path(0.1),
                 Fill::NonZero,
                 Affine::IDENTITY,
-                None,
+                Aliasing::AntiAliased,
                 &mut storage,
                 None,
             );

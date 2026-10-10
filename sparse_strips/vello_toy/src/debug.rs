@@ -19,6 +19,7 @@ use vello_common::flatten::{FlattenCtx, Line};
 use vello_common::geometry::RectU16;
 use vello_common::kurbo::{Affine, BezPath, Cap, Join, Stroke, StrokeCtx};
 use vello_common::peniko::Fill;
+use vello_common::strip::Aliasing;
 use vello_common::strip::{
     Strip, StripAlphaFillSegment, StripFillSegment, visit_strip_fill_segments,
 };
@@ -72,7 +73,13 @@ fn main() {
     }
 
     if stages.iter().any(|s| s.requires_tiling()) {
-        tiles.make_tiles_analytic_aa(Level::new(), &line_buf, args.width, args.height);
+        tiles.make_tiles_analytic_aa(
+            Level::new(),
+            &line_buf,
+            args.width,
+            args.height,
+            Aliasing::AntiAliased,
+        );
         tiles.sort_tiles();
     }
 
@@ -83,7 +90,7 @@ fn main() {
             &mut strip_buf,
             &mut alpha_buf,
             args.fill_rule,
-            None,
+            Aliasing::AntiAliased,
             &line_buf,
         );
     }

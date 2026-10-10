@@ -11,6 +11,7 @@ use crate::dispatch::multi_threaded::MultiThreadedDispatcher;
 use crate::text::{GlyphAtlasResources, GlyphRunBuilder};
 #[cfg(feature = "text")]
 use glifo::GlyphPrepCache;
+use vello_common::strip::Aliasing;
 
 use crate::dispatch::single_threaded::SingleThreadedDispatcher;
 use crate::kurbo::{PathEl, Point};
@@ -175,7 +176,7 @@ pub struct RenderContext {
     /// Temporary path buffer to avoid repeated allocations.
     pub(crate) temp_path: BezPath,
     /// Optional threshold for aliasing.
-    pub(crate) aliasing_threshold: Option<u8>,
+    pub(crate) aliasing: Aliasing,
     pub(crate) encoded_paints: Vec<EncodedPaint>,
     pub(crate) filter: Option<Filter>,
     #[cfg_attr(
@@ -238,7 +239,7 @@ impl RenderContext {
 
         let encoded_paints = vec![];
         let temp_path = BezPath::new();
-        let aliasing_threshold = None;
+        let aliasing = Aliasing::AntiAliased;
 
         Self {
             width,
@@ -246,7 +247,7 @@ impl RenderContext {
             dispatcher,
             state: RenderState::default(),
             root_transforms: RootTransforms::default(),
-            aliasing_threshold,
+            aliasing,
             render_settings: settings,
             mask: None,
             temp_path,
@@ -297,7 +298,7 @@ impl RenderContext {
                 transform,
                 paint,
                 ctx.state.blend_mode,
-                ctx.aliasing_threshold,
+                ctx.aliasing,
                 ctx.mask.clone(),
             );
         });
@@ -316,7 +317,7 @@ impl RenderContext {
                 transform,
                 paint,
                 ctx.state.blend_mode,
-                ctx.aliasing_threshold,
+                ctx.aliasing,
                 ctx.mask.clone(),
             );
         });
@@ -333,7 +334,7 @@ impl RenderContext {
             // Fast path: Use optimized rect filling if we have no skew in the path transform
             // and anti-aliasing is enabled.
             // TODO: Maybe also support no anti-aliasing in the fast path
-            if is_axis_aligned(&transform) && ctx.aliasing_threshold.is_none() {
+            if is_axis_aligned(&transform) && ctx.aliasing == Aliasing::AntiAliased {
                 // Transform the rect to screen coordinates.
                 let transformed_rect = transform.transform_rect_bbox(*rect);
                 ctx.dispatcher.fill_rect_fast(
@@ -351,7 +352,7 @@ impl RenderContext {
                     transform,
                     paint,
                     ctx.state.blend_mode,
-                    ctx.aliasing_threshold,
+                    ctx.aliasing,
                     ctx.mask.clone(),
                 );
             }
@@ -372,7 +373,7 @@ impl RenderContext {
                 transform,
                 paint,
                 ctx.state.blend_mode,
-                ctx.aliasing_threshold,
+                ctx.aliasing,
                 ctx.mask.clone(),
             );
         });
@@ -443,7 +444,7 @@ impl RenderContext {
             transform,
             paint,
             self.state.blend_mode,
-            self.aliasing_threshold,
+            self.aliasing,
             self.mask.clone(),
         );
     }
@@ -517,7 +518,7 @@ impl RenderContext {
             layer_transform,
             blend_mode,
             opacity,
-            self.aliasing_threshold,
+            self.aliasing,
             mask,
             filter_data,
         );
@@ -576,7 +577,12 @@ impl RenderContext {
     /// Note that there is no performance benefit to disabling anti-aliasing and
     /// this functionality is simply provided for compatibility.
     pub fn set_aliasing_threshold(&mut self, aliasing_threshold: Option<u8>) {
-        self.aliasing_threshold = aliasing_threshold;
+        self.set_aliasing(aliasing_threshold.map_or(Aliasing::AntiAliased, Aliasing::Threshold));
+    }
+
+    /// Set how the edges of a shape cover each pixel. See [`Aliasing`].
+    pub fn set_aliasing(&mut self, aliasing: Aliasing) {
+        self.aliasing = aliasing;
     }
 
     /// Pop the last-pushed layer.
@@ -733,12 +739,8 @@ impl RenderContext {
     /// example for how this method differs from `push_clip_layer`.
     pub fn push_clip_path(&mut self, path: &BezPath) {
         let transform = self.transforms().clip_path_transform();
-        self.dispatcher.push_clip_path(
-            path,
-            self.state.fill_rule,
-            transform,
-            self.aliasing_threshold,
-        );
+        self.dispatcher
+            .push_clip_path(path, self.state.fill_rule, transform, self.aliasing);
     }
 
     /// Pop a clip path from the clip stack.
@@ -986,9 +988,11 @@ mod tests {
     #[cfg(feature = "text")]
     use crate::peniko::{Blob, FontData};
     use crate::{CompositeMode, RasterizerSettings, RenderContext, Resources};
+    use alloc::string::String;
     #[cfg(feature = "text")]
     use alloc::sync::Arc;
     use alloc::vec;
+    use alloc::vec::Vec;
     #[cfg(feature = "text")]
     use glifo::Glyph;
     use vello_common::color::PremulRgba8;
@@ -996,6 +1000,7 @@ mod tests {
     use vello_common::kurbo::{Affine, BezPath, Rect, Shape, Stroke};
     use vello_common::peniko::Fill;
     use vello_common::pixmap::{Pixmap, PixmapMut};
+    use vello_common::strip::Aliasing;
     use vello_common::tile::Tile;
 
     const GRAY: PremulRgba8 = PremulRgba8 {
@@ -1023,6 +1028,140 @@ mod tests {
             width,
             height,
         )
+    }
+
+    /// The rows of `path` filled at pixel-centre aliasing on a viewport of 12 by 6 pixels: `#` for a covered pixel.
+    fn pixel_centre_rows(path: &BezPath) -> Vec<String> {
+        let (width, height) = (12, 6);
+        let mut ctx = RenderContext::new(width, height);
+        ctx.set_aliasing(Aliasing::PixelCentre);
+        ctx.set_paint(RED);
+        ctx.fill_path(path);
+        ctx.flush();
+        let mut pixmap = Pixmap::new(width, height);
+        ctx.render(&mut pixmap, &mut Resources::default());
+        pixmap
+            .data()
+            .chunks(usize::from(width))
+            .map(|row| {
+                row.iter()
+                    .map(|pixel| match pixel.a {
+                        255 => '#',
+                        0 => '.',
+                        _ => '~',
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn polygon(points: &[(f64, f64)]) -> BezPath {
+        let mut path = BezPath::new();
+        path.move_to(points[0]);
+        for point in &points[1..] {
+            path.line_to(*point);
+        }
+        path.close_path();
+        path
+    }
+
+    /// Pixel-centre aliasing covers each pixel whose centre the path holds, a centre on a left or a top edge inside
+    /// and on a right or a bottom edge outside, as Ghostscript samples a pixel without anti-aliasing: edges through
+    /// pixel centres, a corner that covers less than half of its pixel, and edges left of the viewport.
+    #[test]
+    fn pixel_centre_aliasing_covers_each_pixel_whose_centre_the_path_holds() {
+        assert_eq!(
+            pixel_centre_rows(&Rect::new(2.5, 1.5, 10.5, 4.5).to_path(0.1)),
+            [
+                "............",
+                "..########..",
+                "..########..",
+                "..########..",
+                "............",
+                "............"
+            ]
+        );
+        assert_eq!(
+            pixel_centre_rows(&Rect::new(0.4, 0.4, 3.0, 2.0).to_path(0.1)),
+            [
+                "###.........",
+                "###.........",
+                "............",
+                "............",
+                "............",
+                "............"
+            ]
+        );
+        assert_eq!(
+            pixel_centre_rows(&polygon(&[
+                (-6.0, 0.0),
+                (6.3, 0.0),
+                (6.3, 6.0),
+                (-2.0, 6.0)
+            ])),
+            ["######......"; 6]
+        );
+        assert_eq!(
+            pixel_centre_rows(&polygon(&[(-6.0, 0.0), (3.7, 6.0), (-6.0, 6.0)])),
+            [
+                "............",
+                "............",
+                "............",
+                "............",
+                "#...........",
+                "###........."
+            ]
+        );
+    }
+
+    /// Pixel-centre aliasing paints the pixels whose centre has a winding that the fill rule fills: random polygons
+    /// across tiles and the left and top edges of the viewport, against the winding of `kurbo` at each centre.
+    #[test]
+    fn pixel_centre_aliasing_paints_the_winding_at_each_centre() {
+        let (width, height) = (37_u16, 29_u16);
+        let mut seed = 0x2545_f491_u32;
+        let mut next = |range: f64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            f64::from(seed) / f64::from(u32::MAX) * range
+        };
+        for case in 0..64 {
+            let points: Vec<(f64, f64)> = (0..3 + case % 6)
+                .map(|_| (next(60.0) - 12.0, next(48.0) - 10.0))
+                .collect();
+            let path = polygon(&points);
+            for fill in [Fill::NonZero, Fill::EvenOdd] {
+                let mut ctx = RenderContext::new(width, height);
+                ctx.set_aliasing(Aliasing::PixelCentre);
+                ctx.set_fill_rule(fill);
+                ctx.set_paint(RED);
+                ctx.fill_path(&path);
+                ctx.flush();
+                let mut pixmap = Pixmap::new(width, height);
+                ctx.render(&mut pixmap, &mut Resources::default());
+                for (index, pixel) in pixmap.data().iter().enumerate() {
+                    let (x, y) = (index % usize::from(width), index / usize::from(width));
+                    let winding = path.winding(vello_common::kurbo::Point::new(
+                        x as f64 + 0.5,
+                        y as f64 + 0.5,
+                    ));
+                    let filled = match fill {
+                        Fill::NonZero => winding != 0,
+                        Fill::EvenOdd => winding % 2 != 0,
+                    };
+                    assert_eq!(
+                        pixel.a == 255,
+                        filled,
+                        "case {case} {fill:?} pixel ({x}, {y})"
+                    );
+                    assert!(
+                        matches!(pixel.a, 0 | 255),
+                        "case {case} {fill:?} pixel ({x}, {y})"
+                    );
+                }
+            }
+        }
     }
 
     fn red_rect_context(width: u16, height: u16, rect: Rect) -> RenderContext {
