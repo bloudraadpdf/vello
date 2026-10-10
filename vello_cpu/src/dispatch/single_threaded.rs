@@ -24,6 +24,7 @@ use vello_common::pixmap::{Pixmap, PixmapMut};
 use vello_common::record::{
     CommandRecorder, LayerClip, LayerProps, Node, PoppedLayer, RecordedLayerKind,
 };
+use vello_common::strip::Aliasing;
 use vello_common::strip_generator::{GenerationMode, StripStorage};
 use vello_common::util::strip_bbox;
 use vello_common::viewport::ViewportState;
@@ -296,7 +297,7 @@ impl Dispatcher for SingleThreadedDispatcher {
         transform: Affine,
         paint: Paint,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     ) {
         let strip_start = self.strip_storage.strips.len();
@@ -307,7 +308,7 @@ impl Dispatcher for SingleThreadedDispatcher {
                     path,
                     fill_rule,
                     transform,
-                    aliasing_threshold,
+                    aliasing,
                     strip_storage,
                     clip_path.map(|clip| clip.path),
                 );
@@ -322,7 +323,7 @@ impl Dispatcher for SingleThreadedDispatcher {
         transform: Affine,
         paint: Paint,
         blend_mode: BlendMode,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
     ) {
         let strip_start = self.strip_storage.strips.len();
@@ -333,7 +334,7 @@ impl Dispatcher for SingleThreadedDispatcher {
                     path,
                     stroke,
                     transform,
-                    aliasing_threshold,
+                    aliasing,
                     strip_storage,
                     clip_path.map(|clip| clip.path),
                 );
@@ -364,7 +365,7 @@ impl Dispatcher for SingleThreadedDispatcher {
         clip_transform: Affine,
         blend_mode: BlendMode,
         opacity: f32,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
         mask: Option<Mask>,
         filter_data: Option<FilterData>,
     ) {
@@ -381,7 +382,7 @@ impl Dispatcher for SingleThreadedDispatcher {
                         clip_path,
                         fill_rule,
                         clip_transform,
-                        aliasing_threshold,
+                        aliasing,
                         strip_storage,
                         existing_clip.map(|clip| clip.path),
                     );
@@ -509,10 +510,10 @@ impl Dispatcher for SingleThreadedDispatcher {
         path: &BezPath,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         self.viewport
-            .push_clip_path(path, fill_rule, transform, aliasing_threshold);
+            .push_clip_path(path, fill_rule, transform, aliasing);
     }
 
     fn push_clip_rect(&mut self, rect: &Rect) {
@@ -569,7 +570,7 @@ mod tests {
             Affine::IDENTITY,
             Paint::Solid(PremulColor::from_alpha_color(BLUE)),
             BlendMode::default(),
-            None,
+            Aliasing::AntiAliased,
             None,
         );
 

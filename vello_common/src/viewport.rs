@@ -6,6 +6,7 @@
 use crate::clip::{ClipRef, ClipState};
 use crate::filter::FilterData;
 use crate::kurbo::{Affine, BezPath, Rect};
+use crate::strip::Aliasing;
 use crate::strip_generator::StripGenerator;
 use alloc::vec::Vec;
 use fearless_simd::Level;
@@ -68,14 +69,14 @@ impl ViewportState {
         path: &BezPath,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         self.clip_state.push_clip_path(
             path,
             &mut self.strip_generator,
             fill_rule,
             transform,
-            aliasing_threshold,
+            aliasing,
         );
     }
 

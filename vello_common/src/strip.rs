@@ -12,6 +12,20 @@ use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 use fearless_simd::*;
 
+/// How the strips of a path cover each pixel at the edges of the path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Aliasing {
+    /// Each pixel takes the share of it that the path covers (analytic anti-aliasing).
+    #[default]
+    AntiAliased,
+    /// Each pixel is covered whole when the path covers at least this share of it (of 255), else not at all.
+    Threshold(u8),
+    /// Each pixel is covered whole when the path holds the centre of the pixel, else not at all. A centre on a left or
+    /// a top edge of the path is inside, a centre on a right or a bottom edge is outside: the rule of a renderer that
+    /// samples each pixel at its centre (Ghostscript without anti-aliasing).
+    PixelCentre,
+}
+
 /// A strip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Strip {
@@ -315,7 +329,7 @@ pub fn render(
     strip_buf: &mut Vec<Strip>,
     alpha_buf: &mut Vec<u8>,
     fill_rule: Fill,
-    aliasing_threshold: Option<u8>,
+    aliasing: Aliasing,
     lines: &[Line],
 ) {
     dispatch!(level, simd => render_impl(simd,
@@ -323,7 +337,7 @@ pub fn render(
                                          strip_buf,
                                          alpha_buf,
                                          fill_rule,
-                                         aliasing_threshold,
+                                         aliasing,
                                          lines));
 }
 
@@ -334,7 +348,7 @@ fn render_impl<S: Simd>(
     strip_buf: &mut Vec<Strip>,
     alpha_buf: &mut Vec<u8>,
     fill_rule: Fill,
-    aliasing_threshold: Option<u8>,
+    aliasing: Aliasing,
     lines: &[Line],
 ) {
     let row_windings = &tiles.windings.coarse;
@@ -489,9 +503,9 @@ fn render_impl<S: Simd>(
 
             let mut u8_vals = f32_to_u8(s.combine_f32x8(p1, p2));
 
-            if let Some(aliasing_threshold) = aliasing_threshold {
+            if let Aliasing::Threshold(threshold) = aliasing {
                 u8_vals = s.select_u8x16(
-                    u8_vals.simd_ge(u8x16::splat(s, aliasing_threshold)),
+                    u8_vals.simd_ge(u8x16::splat(s, threshold)),
                     u8x16::splat(s, 255),
                     u8x16::splat(s, 0),
                 );
@@ -625,11 +639,44 @@ fn render_impl<S: Simd>(
         let line_top_y = f32x4::splat(s, line_top_y);
         let line_bottom_y = f32x4::splat(s, line_bottom_y);
 
+        let px_top_y = f32x4::simd_from(s, [0., 1., 2., 3.]);
+
+        if aliasing == Aliasing::PixelCentre {
+            // The winding at the centre of each pixel: the line crosses the centre row of a pixel row when the
+            // centre lies in `[top, bottom)`, and it winds each pixel of that row whose centre lies on or right
+            // of the crossing. The tile that holds the crossing (`[0, width)` across) counts it; the tiles to its
+            // right take it from the accumulated winding, and the windings of the culled tiles left of the
+            // viewport hold a crossing left of it.
+            let centre_y = px_top_y + 0.5;
+            let crossing_x = (centre_y - line_top_y)
+                .mul_add(f32x4::splat(s, x_slope), f32x4::splat(s, line_top_x));
+            let crosses = s.and_mask32x4(
+                s.and_mask32x4(
+                    s.simd_ge_f32x4(centre_y, line_top_y),
+                    s.simd_lt_f32x4(centre_y, line_bottom_y),
+                ),
+                s.and_mask32x4(
+                    s.simd_ge_f32x4(crossing_x, f32x4::splat(s, 0.0)),
+                    s.simd_lt_f32x4(crossing_x, f32x4::splat(s, f32::from(Tile::WIDTH))),
+                ),
+            );
+            let winding = s.select_f32x4(crosses, f32x4::splat(s, sign), f32x4::splat(s, 0.0));
+            for x_idx in 0..Tile::WIDTH {
+                let centre_x = f32x4::splat(s, f32::from(x_idx) + 0.5);
+                location_winding[x_idx as usize] += s.select_f32x4(
+                    s.simd_le_f32x4(crossing_x, centre_x),
+                    winding,
+                    f32x4::splat(s, 0.0),
+                );
+            }
+            accumulated_winding += winding;
+            continue;
+        }
+
         // See the explanation of this term on the `line_px_left_yx` and `line_px_right_yx`
         // variables below.
         let line_px_base_yx = line_top_y.mul_add(-x_slope, line_top_x);
 
-        let px_top_y = f32x4::simd_from(s, [0., 1., 2., 3.]);
         let px_bottom_y = 1. + px_top_y;
 
         let ymin = line_top_y.max(px_top_y);

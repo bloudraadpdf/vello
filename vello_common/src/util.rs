@@ -5,7 +5,7 @@
 
 use crate::geometry::RectU16;
 use crate::math::{FloatExt, snap_up};
-use crate::strip::{Strip, visit_strip_fill_segments};
+use crate::strip::{Aliasing, Strip, visit_strip_fill_segments};
 use crate::tile::Tile;
 use alloc::vec::Vec;
 use core::ops::{Index, IndexMut};
@@ -147,12 +147,8 @@ pub fn is_axis_aligned(transform: &Affine) -> bool {
 
 /// Transform a rectangle if the rectangle fast path supports the given settings.
 #[inline]
-pub fn into_fast_path_rect(
-    rect: Rect,
-    transform: &Affine,
-    aliasing_threshold: Option<u8>,
-) -> Option<Rect> {
-    (is_axis_aligned(transform) && aliasing_threshold.is_none())
+pub fn into_fast_path_rect(rect: Rect, transform: &Affine, aliasing: Aliasing) -> Option<Rect> {
+    (is_axis_aligned(transform) && aliasing == Aliasing::AntiAliased)
         .then(|| transform.transform_rect_bbox(rect))
 }
 
@@ -566,6 +562,7 @@ pub(crate) mod unpremultiply {
 mod tests {
     use super::RectU16;
     use super::{RectExt, into_fast_path_rect, strip_bbox};
+    use crate::strip::Aliasing;
     use crate::strip::Strip;
     use crate::tile::Tile;
     use peniko::kurbo::{Affine, Rect};
@@ -604,7 +601,7 @@ mod tests {
         let transform = Affine::translate((5.0, 7.0)) * Affine::scale_non_uniform(2.0, -3.0);
 
         assert_eq!(
-            into_fast_path_rect(rect, &transform, None),
+            into_fast_path_rect(rect, &transform, Aliasing::AntiAliased),
             Some(Rect::new(7.0, -5.0, 11.0, 1.0))
         );
     }
@@ -613,9 +610,16 @@ mod tests {
     fn fast_path_rect_rejects_unsupported_settings() {
         let rect = Rect::new(1.0, 2.0, 3.0, 4.0);
 
-        assert_eq!(into_fast_path_rect(rect, &Affine::rotate(0.5), None), None);
         assert_eq!(
-            into_fast_path_rect(rect, &Affine::IDENTITY, Some(128)),
+            into_fast_path_rect(rect, &Affine::rotate(0.5), Aliasing::AntiAliased),
+            None
+        );
+        assert_eq!(
+            into_fast_path_rect(rect, &Affine::IDENTITY, Aliasing::Threshold(128)),
+            None
+        );
+        assert_eq!(
+            into_fast_path_rect(rect, &Affine::IDENTITY, Aliasing::PixelCentre),
             None
         );
     }

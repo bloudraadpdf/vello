@@ -3,7 +3,6 @@
 
 //! Basic render operations.
 
-#[cfg(feature = "text")]
 use crate::Resources;
 #[cfg(feature = "text")]
 use crate::text::GlyphRunBuilder;
@@ -28,6 +27,8 @@ use vello_common::peniko::color::palette::css::BLACK;
 use vello_common::peniko::{BlendMode, Fill};
 use vello_common::record::{CommandRecorder, Drawable, LayerClip, LayerProps, PoppedLayer};
 use vello_common::render_state::RenderState;
+#[cfg(feature = "text")]
+use vello_common::strip::Aliasing;
 use vello_common::strip::Strip;
 use vello_common::strip_generator::{GenerationMode, StripGenerator, StripStorage};
 use vello_common::transforms::{RootTransforms, Transforms};
@@ -216,7 +217,7 @@ pub struct Scene {
     pub(crate) render_state: RenderState,
     /// Root transform stack.
     root_transforms: RootTransforms,
-    pub(crate) aliasing_threshold: Option<u8>,
+    pub(crate) aliasing: Aliasing,
     /// Storage for encoded non-solid paint data.
     pub(crate) encoded_paints: Vec<EncodedPaint>,
     /// Storage for generated strips and alpha values.
@@ -245,7 +246,7 @@ impl Scene {
             viewport_state: ViewportState::new(width, height, level),
             render_state: RenderState::default(),
             root_transforms: RootTransforms::default(),
-            aliasing_threshold: None,
+            aliasing: Aliasing::AntiAliased,
             encoded_paints: vec![],
             strip_storage: RefCell::new(StripStorage::new(GenerationMode::Append)),
             filter: None,
@@ -332,7 +333,7 @@ impl Scene {
                 ctx.effective_path_transform(),
                 ctx.render_state.fill_rule,
                 paint,
-                ctx.aliasing_threshold,
+                ctx.aliasing,
             );
         });
     }
@@ -344,14 +345,14 @@ impl Scene {
         transform: Affine,
         fill_rule: Fill,
         paint: Paint,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         self.record_generated_path(paint, |strip_generator, strip_storage, clip_path| {
             strip_generator.generate_filled_path(
                 path,
                 fill_rule,
                 transform,
-                aliasing_threshold,
+                aliasing,
                 strip_storage,
                 clip_path.map(|clip| clip.path),
             );
@@ -368,7 +369,7 @@ impl Scene {
             path,
             self.render_state.fill_rule,
             transform,
-            self.aliasing_threshold,
+            self.aliasing,
         );
     }
 
@@ -376,7 +377,7 @@ impl Scene {
     pub fn push_clip_rect(&mut self, rect: &Rect) {
         let transform = self.transforms().clip_path_transform();
 
-        if let Some(rect) = into_fast_path_rect(*rect, &transform, self.aliasing_threshold) {
+        if let Some(rect) = into_fast_path_rect(*rect, &transform, self.aliasing) {
             self.viewport_state.push_clip_rect(&rect);
         } else {
             self.push_clip_path(&rect.to_path(DEFAULT_TOLERANCE));
@@ -401,12 +402,7 @@ impl Scene {
             let Some(paint) = ctx.encode_current_paint() else {
                 return;
             };
-            ctx.stroke_path_with(
-                path,
-                ctx.effective_path_transform(),
-                paint,
-                ctx.aliasing_threshold,
-            );
+            ctx.stroke_path_with(path, ctx.effective_path_transform(), paint, ctx.aliasing);
         });
     }
 
@@ -416,7 +412,7 @@ impl Scene {
         path: &BezPath,
         transform: Affine,
         paint: Paint,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         let stroke = self.render_state.stroke.clone();
         self.record_generated_path(paint, |strip_generator, strip_storage, clip_path| {
@@ -424,7 +420,7 @@ impl Scene {
                 path,
                 &stroke,
                 transform,
-                aliasing_threshold,
+                aliasing,
                 strip_storage,
                 clip_path.map(|clip| clip.path),
             );
@@ -443,7 +439,12 @@ impl Scene {
     /// Note that there is no performance benefit to disabling anti-aliasing and
     /// this functionality is simply provided for compatibility.
     pub fn set_aliasing_threshold(&mut self, aliasing_threshold: Option<u8>) {
-        self.aliasing_threshold = aliasing_threshold;
+        self.set_aliasing(aliasing_threshold.map_or(Aliasing::AntiAliased, Aliasing::Threshold));
+    }
+
+    /// Set how the edges of a shape cover each pixel. See [`Aliasing`].
+    pub fn set_aliasing(&mut self, aliasing: Aliasing) {
+        self.aliasing = aliasing;
     }
 
     /// Fill a rectangle with the current paint and fill rule.
@@ -465,9 +466,7 @@ impl Scene {
             }
 
             let transform = ctx.effective_path_transform();
-            if let Some(transformed_rect) =
-                into_fast_path_rect(*rect, &transform, ctx.aliasing_threshold)
-            {
+            if let Some(transformed_rect) = into_fast_path_rect(*rect, &transform, ctx.aliasing) {
                 ctx.record_generated_path(paint, |strip_generator, strip_storage, clip_path| {
                     strip_generator.generate_filled_rect_fast(
                         &transformed_rect,
@@ -482,7 +481,7 @@ impl Scene {
                     transform,
                     ctx.render_state.fill_rule,
                     paint,
-                    ctx.aliasing_threshold,
+                    ctx.aliasing,
                 );
             }
         });
@@ -516,8 +515,8 @@ impl Scene {
         // TODO: Maybe support rotated rectangles (https://github.com/linebender/vello/pull/1482#discussion_r2881223621)
 
         let transform = self.effective_path_transform();
-        let mut transformed_rect = into_fast_path_rect(*rect, &transform, self.aliasing_threshold)?
-            .intersect(self.active_rect());
+        let mut transformed_rect =
+            into_fast_path_rect(*rect, &transform, self.aliasing)?.intersect(self.active_rect());
 
         if let Some(clip) = self.viewport_state.clip() {
             let ClipShape::AxisAlignedRect(clip_rect) = clip.shape else {
@@ -588,7 +587,7 @@ impl Scene {
 
             let path_transform = ctx.effective_path_transform();
             if let Some(transformed_rect) =
-                into_fast_path_rect(inflated_rect, &path_transform, ctx.aliasing_threshold)
+                into_fast_path_rect(inflated_rect, &path_transform, ctx.aliasing)
             {
                 ctx.record_generated_path(paint, |strip_generator, strip_storage, clip_path| {
                     strip_generator.generate_filled_rect_fast(
@@ -603,7 +602,7 @@ impl Scene {
                     path_transform,
                     Fill::NonZero,
                     paint,
-                    ctx.aliasing_threshold,
+                    ctx.aliasing,
                 );
             }
         });
@@ -669,7 +668,7 @@ impl Scene {
                         path,
                         self.render_state.fill_rule,
                         layer_transform,
-                        self.aliasing_threshold,
+                        self.aliasing,
                         &mut strip_storage,
                         existing_clip.map(|clip| clip.path),
                     );
@@ -864,7 +863,7 @@ impl Scene {
 
         self.root_transforms.reset();
         self.render_state.reset();
-        self.aliasing_threshold = None;
+        self.aliasing = Aliasing::AntiAliased;
         self.recorder.reset(self.width, self.height);
         self.filter = None;
     }
@@ -913,6 +912,7 @@ mod tests {
     #[cfg(feature = "text")]
     use vello_common::peniko::{Blob, FontData};
     use vello_common::record::Drawable;
+    use vello_common::strip::Aliasing;
 
     #[test]
     fn recorded_rect_bbox_rounds_fractional_outward() {
@@ -946,7 +946,7 @@ mod tests {
 
         scene.reset();
 
-        assert_eq!(scene.aliasing_threshold, None);
+        assert_eq!(scene.aliasing, Aliasing::AntiAliased);
     }
 
     #[test]

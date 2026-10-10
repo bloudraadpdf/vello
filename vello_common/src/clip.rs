@@ -5,6 +5,7 @@
 
 use crate::geometry::RectU16;
 use crate::kurbo::{Affine, BezPath, PathEl, Rect};
+use crate::strip::Aliasing;
 use crate::strip::Strip;
 use crate::strip_generator::{GenerationMode, StripGenerator, StripStorage};
 use crate::tile::Tile;
@@ -95,14 +96,14 @@ impl ClipContext {
         strip_generator: &mut StripGenerator,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         self.push_generated_clip(strip_generator, |generator, storage, existing_clip| {
             generator.generate_filled_path(
                 clip_path,
                 fill_rule,
                 transform,
-                aliasing_threshold,
+                aliasing,
                 storage,
                 existing_clip.map(|clip| clip.path),
             );
@@ -158,7 +159,7 @@ enum RawClip {
         elements: Range<usize>,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     },
     Rect(Rect),
 }
@@ -267,7 +268,7 @@ impl ClipState {
         strip_generator: &mut StripGenerator,
         fill_rule: Fill,
         transform: Affine,
-        aliasing_threshold: Option<u8>,
+        aliasing: Aliasing,
     ) {
         let path_start = self.path_elements.len();
         self.path_elements.extend(path.iter());
@@ -279,13 +280,13 @@ impl ClipState {
             strip_generator,
             fill_rule,
             clip_transform,
-            aliasing_threshold,
+            aliasing,
         );
         self.raw_clips.push(RawClip::Path {
             elements,
             fill_rule,
             transform,
-            aliasing_threshold,
+            aliasing,
         });
         self.revision = self.revision.wrapping_add(1);
     }
@@ -338,13 +339,13 @@ impl ClipState {
                     elements,
                     fill_rule,
                     transform,
-                    aliasing_threshold,
+                    aliasing,
                 } => self.context.push_clip_path(
                     self.path_elements[elements.clone()].iter().copied(),
                     strip_generator,
                     *fill_rule,
                     active_shift * *transform,
-                    *aliasing_threshold,
+                    *aliasing,
                 ),
                 RawClip::Rect(rect) => {
                     // See comment in `push_clip_rect`.
@@ -835,7 +836,7 @@ mod tests {
     use crate::geometry::RectU16;
     use crate::kurbo::{Affine, BezPath, Rect};
     use crate::peniko::Fill;
-    use crate::strip::Strip;
+    use crate::strip::{Aliasing, Strip};
     use crate::strip_generator::{StripGenerator, StripStorage};
     use crate::tile::Tile;
     use fearless_simd::Level;
@@ -874,7 +875,7 @@ mod tests {
             &mut generator,
             Fill::NonZero,
             Affine::IDENTITY,
-            None,
+            Aliasing::AntiAliased,
         );
         assert_eq!(clips.get().unwrap().shape, ClipShape::Path);
 
