@@ -109,9 +109,9 @@ bytemuck = { version = "1.25.0", features = ["derive"] }
 skrifa = { version = "0.46.2", default-features = false, features = ["autohint_shaping"] }
 # The version of kurbo used below should be kept in sync
 # with the version of kurbo used by peniko.
-peniko = { version = "0.6.1", default-features = false }
+peniko = { git = "ssh://git@git.bloudraad.io/external/peniko.git", rev = "93c3694aa078f5482e5718dcf40f4f15e5efd92e", default-features = false }
 # FIXME: This can be removed once peniko supports the schemars feature.
-kurbo = { version = "0.13.1", default-features = false }
+kurbo = { git = "ssh://git@git.bloudraad.io/external/kurbo.git", rev = "03da2023aac55316eb6287253b34c3f348b775ae", default-features = false }
 futures-intrusive = "0.5.0"
 guillotiere = { version = "0.7.0", default-features = false }
 hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
