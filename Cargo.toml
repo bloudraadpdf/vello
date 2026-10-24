@@ -98,7 +98,7 @@ vello = { version = "0.9.0", path = "vello" }
 vello_encoding = { version = "0.9.0", path = "vello_encoding" }
 vello_shaders = { version = "0.9.0", path = "vello_shaders" }
 bytemuck = { version = "1.25.0", features = ["derive"] }
-skrifa = { version = "0.46.2", default-features = false, features = ["autohint_shaping"] }
+skrifa = { git = "ssh://git@git.bloudraad.io/external/fontations.git", rev = "c4c9501abff873702bca4b8d04f867cc7742de39", default-features = false, features = ["autohint_shaping"] }
 # The version of kurbo used below should be kept in sync
 # with the version of kurbo used by peniko.
 peniko = { git = "ssh://git@git.bloudraad.io/external/peniko.git", rev = "93c3694aa078f5482e5718dcf40f4f15e5efd92e", default-features = false }
