@@ -59,11 +59,12 @@ impl BucketRange {
         Self { start, end }
     }
 
+    /// The tiles of the buckets. The last bucket of a buffer near `u16::MAX` pixels wide ends at the last tile
+    /// that pixel coordinates represent.
     pub(crate) fn span(self) -> TileAlignedSpan {
-        TileAlignedSpan::from_tiles(
-            self.start * DEPTH_BUCKET_TILE_WIDTH,
-            (self.end - self.start) * DEPTH_BUCKET_TILE_WIDTH,
-        )
+        let start = self.start * DEPTH_BUCKET_TILE_WIDTH;
+        let end = (self.end * DEPTH_BUCKET_TILE_WIDTH).min(u16::MAX / Tile::WIDTH);
+        TileAlignedSpan::from_tiles(start, end - start)
     }
 }
 
@@ -469,5 +470,19 @@ mod tests {
         buffer.clear();
 
         assert_depth(&buffer, &[]);
+    }
+
+    #[test]
+    fn the_widest_buffer_reports_its_last_bucket_up_to_its_last_tile() {
+        const WIDTH: u16 = u16::MAX / Tile::WIDTH * Tile::WIDTH;
+        let buffer = DepthBuffer::new(WIDTH);
+        let mut runs = Vec::new();
+        buffer.for_each_unset_run(
+            TileAlignedSpan::from_tiles(0, WIDTH / Tile::WIDTH),
+            |span| {
+                runs.push((span.pixel_x(), span.pixel_end()));
+            },
+        );
+        assert_eq!(runs, [(0, WIDTH)]);
     }
 }
