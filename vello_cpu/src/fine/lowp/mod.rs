@@ -683,7 +683,7 @@ mod tests {
         let backdrop = (0..src.len()).map(|n| ((n * 37 + 11) % 256) as u8).collect::<Vec<_>>();
         let masks = vec![[255_u8; 8]; src.len() / 32];
         dispatch!(Level::try_detect().unwrap_or(Level::baseline()), simd => {
-            let chunks = || src.chunks_exact(32).map(|chunk| u8x32::from_slice(simd, chunk));
+            let chunks = || src.as_chunks::<32>().0.iter().map(|chunk| u8x32::from_slice(simd, chunk));
             let mut unmasked = backdrop.clone();
             fill::alpha_composite(simd, &mut unmasked, chunks());
             let mut masked = backdrop.clone();
