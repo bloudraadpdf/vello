@@ -530,7 +530,7 @@ mod alpha_fill {
     use crate::peniko::{BlendMode, Mix};
     use fearless_simd_macros::simd;
     use vello_common::fearless_simd::*;
-    use vello_common::util::{Div255Ext, narrow, normalized_mul_u8, widen};
+    use vello_common::util::{narrow, normalized_mul_u8};
 
     /// Applies blend mode compositing with per-pixel alpha masks.
     #[simd]
@@ -614,13 +614,8 @@ mod alpha_fill {
 
         let mask_v = extract_masks(s, masks);
         let inv_src_a_mask_a = one - narrow(normalized_mul_u8(src_a, mask_v));
-
-        let bg = widen(bg_v);
-        let inv = widen(inv_src_a_mask_a);
-        let src = widen(src_c);
-        let mask = widen(mask_v);
-        let result = (bg * inv + src * mask).div_255();
-        let res = narrow(result);
+        // Each term rounds as the unmasked composite does, so a full mask composites exactly as no mask.
+        let res = narrow(normalized_mul_u8(bg_v, inv_src_a_mask_a)) + narrow(normalized_mul_u8(src_c, mask_v));
 
         res.store_slice(dest);
     }
@@ -676,6 +671,25 @@ mod tests {
         unpack_fn(&mut region, &mut unpacked);
 
         assert_eq!(scratch, unpacked);
+    }
+
+    #[test]
+    fn a_full_mask_composites_as_no_mask() {
+        let pixels = (0_u16..256)
+            .flat_map(|alpha| (0..=alpha).step_by(17).map(move |channel| [channel as u8, channel as u8, channel as u8, alpha as u8]))
+            .collect::<Vec<_>>();
+        let len = pixels.len() / 8 * 8;
+        let src = pixels[..len].iter().flatten().copied().collect::<Vec<_>>();
+        let backdrop = (0..src.len()).map(|n| ((n * 37 + 11) % 256) as u8).collect::<Vec<_>>();
+        let masks = vec![[255_u8; 8]; src.len() / 32];
+        dispatch!(Level::try_detect().unwrap_or(Level::baseline()), simd => {
+            let chunks = || src.chunks_exact(32).map(|chunk| u8x32::from_slice(simd, chunk));
+            let mut unmasked = backdrop.clone();
+            fill::alpha_composite(simd, &mut unmasked, chunks());
+            let mut masked = backdrop.clone();
+            alpha_fill::alpha_composite(simd, &mut masked, chunks(), masks.iter().copied());
+            assert_eq!(masked, unmasked);
+        });
     }
 
     #[test]
