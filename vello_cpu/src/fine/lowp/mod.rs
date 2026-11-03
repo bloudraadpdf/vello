@@ -615,7 +615,8 @@ mod alpha_fill {
         let mask_v = extract_masks(s, masks);
         let inv_src_a_mask_a = one - narrow(normalized_mul_u8(src_a, mask_v));
         // Each term rounds as the unmasked composite does, so a full mask composites exactly as no mask.
-        let res = narrow(normalized_mul_u8(bg_v, inv_src_a_mask_a)) + narrow(normalized_mul_u8(src_c, mask_v));
+        let res = narrow(normalized_mul_u8(bg_v, inv_src_a_mask_a))
+            + narrow(normalized_mul_u8(src_c, mask_v));
 
         res.store_slice(dest);
     }
@@ -676,11 +677,17 @@ mod tests {
     #[test]
     fn a_full_mask_composites_as_no_mask() {
         let pixels = (0_u16..256)
-            .flat_map(|alpha| (0..=alpha).step_by(17).map(move |channel| [channel as u8, channel as u8, channel as u8, alpha as u8]))
+            .flat_map(|alpha| {
+                (0..=alpha)
+                    .step_by(17)
+                    .map(move |channel| [channel as u8, channel as u8, channel as u8, alpha as u8])
+            })
             .collect::<Vec<_>>();
         let len = pixels.len() / 8 * 8;
         let src = pixels[..len].iter().flatten().copied().collect::<Vec<_>>();
-        let backdrop = (0..src.len()).map(|n| ((n * 37 + 11) % 256) as u8).collect::<Vec<_>>();
+        let backdrop = (0..src.len())
+            .map(|n| ((n * 37 + 11) % 256) as u8)
+            .collect::<Vec<_>>();
         let masks = vec![[255_u8; 8]; src.len() / 32];
         dispatch!(Level::try_detect().unwrap_or(Level::baseline()), simd => {
             let chunks = || src.as_chunks::<32>().0.iter().map(|chunk| u8x32::from_slice(simd, chunk));
