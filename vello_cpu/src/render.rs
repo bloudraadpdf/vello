@@ -1067,7 +1067,7 @@ mod tests {
     #[cfg(feature = "text")]
     use glifo::Glyph;
     use vello_common::color::PremulRgba8;
-    use vello_common::color::palette::css::{BLUE, RED};
+    use vello_common::color::palette::css::{BLUE, GREEN, RED};
     use vello_common::kurbo::{Affine, BezPath, Rect, Shape, Stroke};
     use vello_common::peniko::{Fill, ImageAlphaType};
     use vello_common::pixmap::{PixelMetadata, Pixmap, PixmapMut};
@@ -1426,6 +1426,49 @@ mod tests {
         }
         ctx.flush();
         ctx
+    }
+
+    /// A gradient and its reverse, with reversed stops, paint the same pixels: each pixel takes the lookup entry
+    /// nearest to its offset, whichever end the offsets start from.
+    #[test]
+    fn a_gradient_and_its_reverse_paint_the_same_pixels() {
+        use vello_common::peniko::{ColorStop, Gradient};
+
+        let render = |(start, end), (first, last), render_mode| {
+            let mut ctx = RenderContext::new(1, 1_000);
+            ctx.set_paint(
+                Gradient::new_linear(start, end).with_stops(
+                    [
+                        ColorStop::from((0.0_f32, first)),
+                        ColorStop::from((1.0_f32, last)),
+                    ]
+                    .as_slice(),
+                ),
+            );
+            ctx.fill_rect(&Rect::new(0.0, 0.0, 1.0, 1_000.0));
+            ctx.flush();
+            let mut pixmap = Pixmap::new(1, 1_000);
+            ctx.render_with(
+                &mut pixmap,
+                &mut Resources::new(),
+                RasterizerSettings {
+                    render_mode,
+                    ..RasterizerSettings::default()
+                },
+            );
+            pixmap.data().to_vec()
+        };
+        for render_mode in [
+            crate::RenderMode::OptimizeSpeed,
+            crate::RenderMode::OptimizeQuality,
+        ] {
+            let forward = render(((0.0, 0.0), (0.0, 1_000.0)), (GREEN, BLUE), render_mode);
+            let reverse = render(((0.0, 1_000.0), (0.0, 0.0)), (BLUE, GREEN), render_mode);
+            let differing = (0..forward.len())
+                .filter(|&row| forward[row] != reverse[row])
+                .collect::<Vec<_>>();
+            assert_eq!(differing, [], "{render_mode:?}");
+        }
     }
 
     /// Each band of rows from its scene origin holds its rows of the scene rasterized whole, each

@@ -43,7 +43,10 @@ impl<S: Simd> Iterator for GradientPainter<'_, S> {
         let extend = self.gradient.extend;
         let pos = f32x16::from_slice(self.simd, self.t_vals.next()?);
         let t_vals = apply_extend(pos, extend);
-        let indices = (t_vals * self.scale_factor).to_int::<u32x16<S>>();
+        // The nearest entry, so that a gradient and its reverse take the same entries.
+        let indices = t_vals
+            .mul_add(self.scale_factor, f32x16::splat(self.simd, 0.5))
+            .to_int::<u32x16<S>>();
 
         let mut vals = [0_u8; 64];
         for (val, idx) in vals.chunks_exact_mut(4).zip(*indices) {

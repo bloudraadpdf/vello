@@ -27,8 +27,8 @@ fn sample_gradient_lut(
 ) -> vec4<f32> {
     // Apply extend mode to t_value
     let clamped_t = extend_mode_normalized(t_value, extend_mode);
-    // Convert t_value to texture coordinate
-    let t_offset = u32(clamped_t * f32(texture_width - 1u));
+    // The nearest entry, so that a gradient and its reverse take the same entries.
+    let t_offset = u32(clamped_t * f32(texture_width - 1u) + 0.5);
     // Calculate absolute position in flat gradient texture
     let flat_coord = gradient_start + t_offset;
     // Convert flat coordinate to 2D texture coordinate

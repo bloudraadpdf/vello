@@ -74,7 +74,10 @@ impl<S: Simd> Iterator for GradientPainter<'_, S> {
         let pos = f32x8::from_slice(self.simd, self.t_vals.next()?);
         let t_vals = apply_extend(pos, extend);
         let valid = pos.simd_eq(pos);
-        let indices = (t_vals * self.scale_factor).to_int::<u32x8<S>>();
+        // The nearest entry, so that a gradient and its reverse take the same entries.
+        let indices = t_vals
+            .mul_add(self.scale_factor, f32x8::splat(self.simd, 0.5))
+            .to_int::<u32x8<S>>();
         // In case we had any NaN's, set the index to an explicit invalid sentinel. There
         // probably is architecture-specific behavior how NaN will be converted to
         // f32, so we apply our own handling of that.
